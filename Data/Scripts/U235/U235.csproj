@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net48</TargetFramework>
+        <Platforms>x64</Platforms>
+        <LangVersion>6</LangVersion>
+        <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+        <GenerateNeutralResourcesLanguageAttribute>false</GenerateNeutralResourcesLanguageAttribute>
+        <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    </PropertyGroup>
+    
+    <ItemGroup>
+      <Reference Include="Microsoft.CSharp" />
+      <Reference Include="netstandard" />
+      <Reference Include="ProtoBuf.Net.Core">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\ProtoBuf.Net.Core.dll</HintPath>
+      </Reference>
+      <Reference Include="Sandbox.Common">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\Sandbox.Common.dll</HintPath>
+      </Reference>
+      <Reference Include="Sandbox.Game">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\Sandbox.Game.dll</HintPath>
+      </Reference>
+      <Reference Include="Sandbox.Graphics">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\Sandbox.Graphics.dll</HintPath>
+      </Reference>
+      <Reference Include="SpaceEngineers.Game">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\SpaceEngineers.Game.dll</HintPath>
+      </Reference>
+      <Reference Include="SpaceEngineers.ObjectBuilders">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\SpaceEngineers.ObjectBuilders.dll</HintPath>
+      </Reference>
+      <Reference Include="System" />
+      <Reference Include="System.Collections.Immutable">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\System.Collections.Immutable.dll</HintPath>
+      </Reference>
+      <Reference Include="System.Core" />
+      <Reference Include="System.Data" />
+      <Reference Include="System.Data.DataSetExtensions" />
+      <Reference Include="System.Net.Http" />
+      <Reference Include="System.Xml" />
+      <Reference Include="System.Xml.Linq" />
+      <Reference Include="VRage">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\VRage.dll</HintPath>
+      </Reference>
+      <Reference Include="VRage.Game">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\VRage.Game.dll</HintPath>
+      </Reference>
+      <Reference Include="VRage.Input">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\VRage.Input.dll</HintPath>
+      </Reference>
+      <Reference Include="VRage.Library">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\VRage.Library.dll</HintPath>
+      </Reference>
+      <Reference Include="VRage.Math">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\VRage.Math.dll</HintPath>
+      </Reference>
+      <Reference Include="VRage.Render">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\VRage.Render.dll</HintPath>
+      </Reference>
+      <Reference Include="VRage.Render11">
+        <HintPath>C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64\VRage.Render11.dll</HintPath>
+      </Reference>
+      <PackageReference Include="Mal.Mdk2.ModAnalyzers" Version="*" />
+    </ItemGroup>
+
+</Project>

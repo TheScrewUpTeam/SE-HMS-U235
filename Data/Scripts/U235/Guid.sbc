@@ -1,0 +1,14 @@
+<Definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <EntityComponents>
+    <EntityComponent xsi:type="MyObjectBuilder_ModStorageComponentDefinition">
+      <Id>
+        <TypeId>ModStorageComponent</TypeId>
+        <SubtypeId>HMS.U235</SubtypeId>
+      </Id>
+      <RegisteredStorageGuids>
+        <guid>decafbad-0000-4c00-babe-c0ffee000011</guid>
+        <guid>decafbad-0000-4c00-babe-c0ffee000012</guid>
+      </RegisteredStorageGuids>
+    </EntityComponent>
+  </EntityComponents>
+</Definitions>
