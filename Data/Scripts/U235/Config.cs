@@ -10,6 +10,8 @@ namespace TSUT.HeatManagement
 
         public static readonly Guid CoreTempKey = new Guid("decafbad-0000-4c00-babe-c0ffee000011");
         public static readonly Guid BlockStateKey = new Guid("decafbad-0000-4c00-babe-c0ffee000012");
+        public static readonly Guid FuelCooldown = new Guid("decafbad-0000-4c00-babe-c0ffee000013");
+        public static readonly Guid ReactorState = new Guid("decafbad-0000-4c00-babe-c0ffee000014");
 
         public string SYSTEM_VERSION = "1.0.1";
         public bool SYSTEM_AUTO_UPDATE = true;
@@ -18,9 +20,15 @@ namespace TSUT.HeatManagement
         public float REACTOR_MINIMAL_LAUNCH_TEMPERATURE = 0; // °C
         public float REACTOR_WORKING_TEMPERATURE = 800; // °C
         public float REACTOR_MELTDOWN_TEMPERATURE = 1250; // °C
+        public float REACTOR_MAINTENANCE_TEMPERATURE = 100; // °C
         public float MAX_ENERGY_OUTPUT = 1000000; // J/kg fuel
         public float ALHPA_MODIFIER = 0.66f; // mass ~ V^alpha
         public float BETA_MODIFIER = 0.5f; // time ~ mass^beta
+        public float URANIUM_ENERGY = 82100000000; // Total U energy (J/g)
+        public float BURN_ENFFICIENCY = 0.005f; // 5%
+        public float BURN_TIME = 1800; // Baseline for burning time (s)
+        public float INTERNAL_WASTE = 0.05f; // 5% of energy used to clear fuel waste
+        public float HEAT_WASTE = 0.3f; // 30% of energy wasted as heat
         private static Config _instance;
         private const string CONFIG_FILE = "TSUT_U235_Config.xml";
 

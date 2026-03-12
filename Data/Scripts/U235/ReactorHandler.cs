@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using Sandbox.Definitions;
 using Sandbox.Game;
+using Sandbox.Game.Entities;
 using Sandbox.Game.EntityComponents;
 using Sandbox.ModAPI;
 using Sandbox.ModAPI.Interfaces.Terminal;
@@ -32,17 +33,50 @@ namespace TSUT.U235
 
         private bool _autoRestartOn = false;
         private bool _switchSubscribed = false;
-        private ReactorState State;
         private float _batchFuelAmouont = 1f; // kg
         private float _batchBurningTime;
         private float _coreTemp;
         private string _lastLaunchFailReason = "";
         private float _blockTermalCapacity;
         private float _coreTermalCapacity;
+        private float _burningCycleCountDown;
+        private float _lastTempChange;
+        private MyResourceSourceComponent _source;
+        private ReactorState _state;
 
         const float FUEL_REFERENCE = 1f;
         const float VOLUME_REFERENCE = 0.125f;
         const float LONGATION_REFERENCE = 600;
+
+        private float FuelCountdown
+        {
+            get { return _burningCycleCountDown; }
+            set
+            {
+                _burningCycleCountDown = value;
+                Storage.SetFloat(_reactor, Config.FuelCooldown, value);
+            }
+        }
+
+        private ReactorState State
+        {
+            get { return _state; }
+            set
+            {
+                _state = value;
+                Storage.SetFloat(_reactor, Config.ReactorState, (float)value);
+            }
+        }
+
+        protected float CoreTemp
+        {
+            get { return _coreTemp; }
+            set
+            {
+                _coreTemp = value;
+                Storage.SetFloat(_reactor, Config.CoreTempKey, value);
+            }
+        }
 
         public bool IsReadyToLaunch
         {
@@ -57,16 +91,6 @@ namespace TSUT.U235
             get
             {
                 return State == ReactorState.Running;
-            }
-        }
-
-        protected float CoreTemp
-        {
-            get { return _coreTemp; }
-            set
-            {
-                _coreTemp = value;
-                Storage.SetFloat(_reactor, Config.BlockStateKey, value);
             }
         }
 
@@ -87,6 +111,8 @@ namespace TSUT.U235
             _inventory = block.GetInventory(0);
             _coreTemp = Storage.GetFloat(block, Config.CoreTempKey, _api.Utils.GetHeat(block));
             _autoRestartOn = Storage.GetBool(block, Config.BlockStateKey, false);
+            _state = (ReactorState)Math.Round(Storage.GetFloat(block, Config.ReactorState));
+            _burningCycleCountDown = Storage.GetFloat(block, Config.FuelCooldown);
             MyAPIGateway.TerminalControls.CustomControlGetter += OnCustomControlGetter;
             block.Enabled = false;
             block.EnabledChanged += OnEnabledChanged;
@@ -94,7 +120,34 @@ namespace TSUT.U235
             _blockTermalCapacity = _api.Utils.GetThermalCapacity(block);
             _coreTermalCapacity = GetCoreThermalCapacity();
             ComputeFuelPlan(block, out _batchFuelAmouont, out _batchBurningTime);
+            InitiateSource();
         }
+
+        private void InitiateSource()
+        {
+            _source = _reactor.Components.Get<MyResourceSourceComponent>();
+            _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, GetOptimalPowerOutput(1) / 1000000);
+            _source.Enabled = true;
+            MyLog.Default.WriteLine($"[HMS.U235] Source found: {_source}");
+        }
+
+        // private void InitiateSource()
+        // {
+        //     _source = new MyResourceSourceComponent();
+        //     var sourceInfo = new MyResourceSourceInfo
+        //     {
+        //         ResourceTypeId = MyResourceDistributorComponent.ElectricityId,
+        //         DefinedOutput = 0f,
+        //         ProductionToCapacityMultiplier = 1f,
+        //     };
+        //     _source.Init(MyStringHash.GetOrCompute("Reactor"), sourceInfo);
+        //     _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, GetOptimalPowerOutput(1));
+        //     MyLog.Default.WriteLine($"[HMS.U235] Source created: {_source}");
+        //     var distributor = _reactor.CubeGrid.ResourceDistributor as MyResourceDistributorComponent;
+        //     distributor?.AddSource(_source);
+        //     distributor.MarkForUpdate();
+        //     MyLog.Default.WriteLine($"[HMS.U235] Source added to distributor: {_source}");
+        // }
 
         private void ComputeFuelPlan(IMyReactor block, out float batchFuelAmouont, out float batchBurningTime)
         {
@@ -121,7 +174,7 @@ namespace TSUT.U235
         private void OnAppendCustomInfo(IMyTerminalBlock block, StringBuilder builder)
         {
             float currentHeat = _api.Utils.GetHeat(_reactor);
-            float internalUse = GetTempChange(1, false) / _blockTermalCapacity; // °C/s
+            float internalUse = _lastTempChange; // °C/s
             float neighborExchange;
             float networkExchange;
 
@@ -151,12 +204,15 @@ namespace TSUT.U235
                 case ReactorState.Running:
                     AddRunningInfo(builder);
                     break;
+                case ReactorState.CoolingDown:
+                    AddCoolingDownInfo(builder);
+                    break;
             }
+            builder.AppendLine($"Core Temperature: {CoreTemp:F2} °C");
             builder.AppendLine("");
             builder.AppendLine($"Temperature: {currentHeat:F2} °C");
-            builder.AppendLine($"Core temperature: {CoreTemp:F2} °C");
             string heatStatus = heatChange > 0 ? "Heating" : heatChange < -0.01 ? "Cooling" : "Stable";
-            builder.AppendLine($"Thermal Status: {heatStatus}");
+            builder.AppendLine($"Block's Thermal Status: {heatStatus}");
             builder.AppendLine($"Net Heat Change: {heatChange:+0.00;-0.00;0.00} °C/s");
             builder.AppendLine($"Thermal capacity: {_blockTermalCapacity / 1000000:F1} MJ/°C");
             builder.AppendLine($"Core thermal capacity: {_coreTermalCapacity / 1000000:F1} MJ/°C");
@@ -167,15 +223,35 @@ namespace TSUT.U235
             builder.Append(neighborInfo);
         }
 
+        private void AddCoolingDownInfo(StringBuilder builder)
+        {
+            float needToDissipate = CoreTemp - Config.Instance.REACTOR_MAINTENANCE_TEMPERATURE;
+            float cooldownPace = getInternalExchangeEnergy(1f) / _coreTermalCapacity;
+            builder.AppendLine($"Target Core Temperature: {Config.Instance.REACTOR_MAINTENANCE_TEMPERATURE} °C");
+            if (cooldownPace > 0) {
+                float timeToCooled = needToDissipate / cooldownPace;
+                TimeSpan timeSpan = TimeSpan.FromSeconds(timeToCooled);
+                string formattedTime = timeSpan.ToString(@"mm\:ss");
+                builder.AppendLine($"Estimated Time To Cool Down: {formattedTime}");
+            } else
+            {
+                builder.AppendLine($"WARNING! Reactor shell is too hot, core will never cool down");
+            }
+        }
+
         private void AddRunningInfo(StringBuilder builder)
         {
-            float curOut = GetCurrentEnergyOutput();
-            builder.AppendLine($"Current generation: {FormatEnergyPerSecond(curOut)}");
+            float curOut = GetCurrentEnergyOutput(1f);
+            builder.AppendLine($"Current Power Generation: {FormatEnergyPerSecond(curOut)}");
+            builder.AppendLine($"Core Heat Change: {GetCurrentHeatChange(1f) / _coreTermalCapacity:F2} °C/s");
+            TimeSpan timeSpan = TimeSpan.FromSeconds(FuelCountdown);
+            string formattedTime = timeSpan.ToString(@"hh\:mm\:ss");
+            builder.AppendLine($"Fuel TTL: {formattedTime}");
         }
 
         private void AddHeatingUpInfo(StringBuilder builder)
         {
-            float Pnow = GetCurrentEnergyOutput();      // J/s right now
+            float Pnow = GetCurrentEnergyOutput(1f);      // J/s right now
             float C = _coreTermalCapacity;              // J/°C
             float T = CoreTemp;
             float Ttarget = Config.Instance.REACTOR_WORKING_TEMPERATURE;
@@ -185,15 +261,15 @@ namespace TSUT.U235
             float heatNeeded = dT * C;                  // total joules needed
 
             // Estimate using average power (current + final)/2 to simulate rising curve
-            float avgPower = (Pnow + getOptimalPowerOutput()) / 2;
+            float avgPower = (Pnow + GetOptimalPowerOutput(1f)) / 2;
             float secondsToLaunch = heatNeeded / avgPower;
 
-            builder.AppendLine($"Current generation: {FormatEnergyPerSecond(Pnow)}");
+            builder.AppendLine($"Current Powe Generation: {FormatEnergyPerSecond(Pnow)}");
             if (!float.IsNaN(secondsToLaunch) && !float.IsInfinity(secondsToLaunch))
             {
                 TimeSpan timeSpan = TimeSpan.FromSeconds(secondsToLaunch);
                 string formattedTime = timeSpan.ToString(@"mm\:ss");
-                builder.AppendLine($"Estimated time to heat up: {formattedTime}");
+                builder.AppendLine($"Estimated Time to Heat Up: {formattedTime}");
             }
         }
 
@@ -258,7 +334,7 @@ namespace TSUT.U235
 
             var blockTemp = _api.Utils.GetHeat(_reactor);
 
-            MyLog.Default.WriteLine($"[HMS.U235] GetHeatChange[{_reactor.DisplayNameText}]: B{blockTemp:F6}, I: {@internal:F4}, A{ambientExchange:F4} C{@internal - ambientExchange:F4}");
+            // MyLog.Default.WriteLine($"[HMS.U235] GetHeatChange[{_reactor.DisplayNameText}]: B{blockTemp:F6}, I: {@internal:F4}, A{ambientExchange:F4} C{@internal - ambientExchange:F4}");
 
             return @internal - ambientExchange;
         }
@@ -286,34 +362,81 @@ namespace TSUT.U235
                 case ReactorState.Running:
                     change += RunningCycle(deltaTime, process);
                     break;
+                case ReactorState.CoolingDown:
+                    change += CoolingDownCycle(deltaTime, process);
+                    break;
                 default:
                     break;
             }
 
+            _lastTempChange = change;
 
             return change;
         }
 
+        private float CoolingDownCycle(float deltaTime, bool process)
+        {
+            var needToTransfer = (CoreTemp - Config.Instance.REACTOR_MAINTENANCE_TEMPERATURE) * _coreTermalCapacity;
+            var canBeTransferred = getInternalExchangeEnergy(deltaTime);
+            var realTransfer = Math.Max(Math.Min(needToTransfer, canBeTransferred), 0);
+            MyLog.Default.WriteLine($"[HMS.U235] CoolingDown: NTT:{needToTransfer}, CBT:{canBeTransferred}, RT: {realTransfer}");
+            if (process)
+            {
+                CoreTemp -= realTransfer / _coreTermalCapacity;
+                if (CoreTemp <= Config.Instance.REACTOR_MAINTENANCE_TEMPERATURE)
+                {
+                    State = ReactorState.Idle;
+                }
+            }
+            return realTransfer / _blockTermalCapacity;
+        }
+
         private float RunningCycle(float deltaTime, bool process)
         {
-            // TODO: Estimate fraction transferrable to the heat, fuel burning time
-            var currentPower = GetCurrentEnergyOutput();
-            SetOutputPower(currentPower / 1000000);
+            var currentPower = GetCurrentEnergyOutput(deltaTime);
+            var internalUse = GetCurrentHeatChange(deltaTime);
+            if (process)
+            {
+                CoreTemp += internalUse / _coreTermalCapacity;
+            }
             var needToTransfer = (CoreTemp - Config.Instance.REACTOR_WORKING_TEMPERATURE) * _coreTermalCapacity;
             var canBeTransferred = getInternalExchangeEnergy(deltaTime);
             var realTransfer = Math.Max(Math.Min(needToTransfer, canBeTransferred), 0);
             if (process)
             {
+                SetOutputPower(GetCurrentEnergyOutput(1) / 1000000);
                 CoreTemp -= realTransfer / _coreTermalCapacity;
+                FuelCountdown -= deltaTime;
+                if (FuelCountdown <= 0)
+                {
+                    SetOutputPower(0);
+                    FuelCountdown = 0;
+                    State = ReactorState.CoolingDown;
+                }
             }
             return realTransfer / _blockTermalCapacity;
         }
 
         private void SetOutputPower(float outputMW)
         {
-            // TODO: Figure out and fix
-            // var distributor = _reactor.CubeGrid.ResourceDistributor as MyResourceDistributorComponent;
-            // distributor?.AddSource(_reactor.EntityId, outputMW);
+            MyLog.Default.WriteLine($"[HMS.U235] Source {_source}");
+            MyLog.Default.WriteLine($"[HMS.U235] Source updating, ID: {MyResourceDistributorComponent.ElectricityId}, Output: {outputMW}");
+            if (_source == null)
+                return;
+            _source.SetOutputByType(MyResourceDistributorComponent.ElectricityId, outputMW);
+            _source.SetMaxOutput(55);
+            _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, 22);
+            MyLog.Default.WriteLine($"[HMS.U235] Source updated... {_source.MaxOutput}");
+        }
+
+        private void ShowAllSources()
+        {
+            var distributor = _reactor.CubeGrid.ResourceDistributor as MyResourceDistributorComponent;
+            if (distributor != null)
+            {
+                var sourcesCount = distributor.GetSourceCount(MyResourceDistributorComponent.ElectricityId, MyStringHash.GetOrCompute("Reactor"));
+                MyLog.Default.WriteLine($"[HMS.U235.DEBUG] Total sources on grid: {sourcesCount}");
+            }
         }
 
         private float HeatUpCycle(float deltaTime, bool process)
@@ -329,13 +452,14 @@ namespace TSUT.U235
                     CoreTemp += coreChange;
                 change += blockChange;
             }
-            float currentPower = GetCurrentEnergyOutput();
+            float currentPower = GetCurrentEnergyOutput(deltaTime) + GetCurrentHeatChange(deltaTime);
             if (process)
             {
                 CoreTemp += currentPower / _coreTermalCapacity;
                 if (CoreTemp >= Config.Instance.REACTOR_WORKING_TEMPERATURE)
                 {
                     State = ReactorState.Running;
+                    FuelCountdown = _batchBurningTime;
                 }
             }
 
@@ -352,7 +476,7 @@ namespace TSUT.U235
             float tempDiff = CoreTemp - extTemp;
             float energyTransferred = tempDiff * conductivity * deltaTime;
             energyTransferred = ApplyExchangeLimit(energyTransferred, _coreTermalCapacity, _blockTermalCapacity, tempDiff);
-            MyLog.Default.WriteLine($"[HMS.U235] InternalExchange: ET{extTemp:F2}, C:{conductivity:F2}, TD{tempDiff:F2} TR{energyTransferred:F2}");
+            // MyLog.Default.WriteLine($"[HMS.U235] InternalExchange: ET{extTemp:F2}, C:{conductivity:F2}, TD{tempDiff:F2} TR{energyTransferred:F2}");
             return energyTransferred;
         }
 
@@ -381,30 +505,50 @@ namespace TSUT.U235
         }
 
         /**
-        Returns result in J/s
+        Returns result in J
         */
-        private float GetCurrentEnergyOutput()
+        private float GetCurrentEnergyOutput(float deltaTime)
         {
-            return GetEnergyOutputAtTemp(CoreTemp);
+            return GetEnergyOutputAtTemp(CoreTemp, deltaTime);
         }
 
-        private float getOptimalPowerOutput()
+        private float GetOptimalPowerOutput(float deltaTime)
         {
-            return _batchFuelAmouont * Config.Instance.MAX_ENERGY_OUTPUT;
+            float totalCleanEnergy = GetCleanEnergy();
+            float energyPerSecond = totalCleanEnergy / _batchBurningTime;
+            return energyPerSecond * deltaTime;
         }
 
-        private float GetEnergyOutputAtTemp(float temp)
+        private float GetCurrentHeatChange(float deltaTime)
         {
-            float optimalPower = getOptimalPowerOutput();
+            float totalBatchEnergy = _batchFuelAmouont * Config.Instance.URANIUM_ENERGY;
+            float extractedEnergy = totalBatchEnergy * Config.Instance.BURN_ENFFICIENCY;
+            float totalHeat = extractedEnergy * Config.Instance.HEAT_WASTE;
+            float heatPerSec = totalHeat / _batchBurningTime;
+            return heatPerSec * deltaTime;
+        }
+
+        private float GetCleanEnergy()
+        {
+            float totalBatchEnergy = _batchFuelAmouont * Config.Instance.URANIUM_ENERGY;
+            float extractedEnergy = totalBatchEnergy * Config.Instance.BURN_ENFFICIENCY;
+            float internalWaste = extractedEnergy * Config.Instance.INTERNAL_WASTE;
+            float heatWaste = extractedEnergy * Config.Instance.HEAT_WASTE;
+            return extractedEnergy - internalWaste - heatWaste;
+        }
+
+        private float GetEnergyOutputAtTemp(float temp, float deltaTime)
+        {
+            float optimalPower = GetOptimalPowerOutput(deltaTime);
 
             // Normalize temperature ratio
-            float t = Math.Min(Math.Max(temp / Config.Instance.REACTOR_WORKING_TEMPERATURE, 0f), 1f);
+            float temperatureModifier = Math.Min(Math.Max(temp / Config.Instance.REACTOR_WORKING_TEMPERATURE, 0f), 1f);
 
             // Linear growth with a mild ignition assist when cold
-            float basePower = t * optimalPower;
+            float basePower = temperatureModifier * optimalPower;
 
             // Small ignition boost that fades out as temperature rises
-            float ignitionAssist = (1f - t) * 0.05f * optimalPower;
+            float ignitionAssist = (1f - temperatureModifier) * 0.1f * optimalPower;
 
             return basePower + ignitionAssist; // in J/s
         }
