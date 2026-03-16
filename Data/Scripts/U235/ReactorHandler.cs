@@ -382,6 +382,7 @@ namespace TSUT.U235
             MyLog.Default.WriteLine($"[HMS.U235] CoolingDown: NTT:{needToTransfer}, CBT:{canBeTransferred}, RT: {realTransfer}");
             if (process)
             {
+                SetOutputPower(0);
                 CoreTemp -= realTransfer / _coreTermalCapacity;
                 if (CoreTemp <= Config.Instance.REACTOR_MAINTENANCE_TEMPERATURE)
                 {
@@ -419,14 +420,16 @@ namespace TSUT.U235
 
         private void SetOutputPower(float outputMW)
         {
-            MyLog.Default.WriteLine($"[HMS.U235] Source {_source}");
-            MyLog.Default.WriteLine($"[HMS.U235] Source updating, ID: {MyResourceDistributorComponent.ElectricityId}, Output: {outputMW}");
+            MyLog.Default.WriteLine($"[HMS.U235] 1Source {_source}");
+            MyLog.Default.WriteLine($"[HMS.U235] 1Source updating, ID: {MyResourceDistributorComponent.ElectricityId}, Output: {outputMW}");
             if (_source == null)
                 return;
-            _source.SetOutputByType(MyResourceDistributorComponent.ElectricityId, outputMW);
-            _source.SetMaxOutput(55);
-            _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, 22);
-            MyLog.Default.WriteLine($"[HMS.U235] Source updated... {_source.MaxOutput}");
+            _source.SetOutputByType(MyResourceDistributorComponent.ElectricityId, 0.1f);
+            var distributor = _reactor.CubeGrid.ResourceDistributor as MyResourceDistributorComponent;
+            distributor?.MarkForUpdate();
+            _reactor.SetDetailedInfoDirty();
+            _reactor.RefreshCustomInfo();
+            MyLog.Default.WriteLine($"[HMS.U235] 1Source updated... {_source.MaxOutput}");
         }
 
         private void ShowAllSources()
