@@ -285,9 +285,11 @@ namespace TSUT.U235
 
         private void OnEnabledChanged(IMyTerminalBlock block)
         {
-            _autoRestartOn = _reactor.Enabled;
-            Storage.SetBool(_reactor, Config.BlockStateKey, _reactor.Enabled);
-            _reactor.Enabled = false;
+            if (_reactor.Enabled)
+            {
+                MyLog.Default.WriteLine($"[HMS.U235] OnEnabledChanged: external enable detected, forcing back to false");
+                _reactor.Enabled = false;
+            }
         }
 
         private void OnCustomControlGetter(IMyTerminalBlock topBlock, List<IMyTerminalControl> controls)
@@ -303,18 +305,25 @@ namespace TSUT.U235
                     if (onOffControl == null)
                         continue;
 
-                    onOffControl.Getter += (block) =>
+                    var originalGetter = onOffControl.Getter;
+                    var originalSetter = onOffControl.Setter;
+                    onOffControl.OnText = MyStringId.GetOrCompute("Auto");
+                    onOffControl.OffText = MyStringId.GetOrCompute("Manual");
+
+                    onOffControl.Getter = (block) =>
                     {
                         if (block == _reactor)
+                        {
+                            MyLog.Default.WriteLine($"[HMS.U235] OnOff Getter called for reactor, returning _autoRestartOn={_autoRestartOn}");
                             return _autoRestartOn;
-                        return (block as IMyFunctionalBlock).Enabled;
+                        }
+                        return originalGetter(block);
                     };
-                    onOffControl.Setter += (block, value) =>
+                    onOffControl.Setter = (block, value) =>
                     {
-                        if (block != _reactor)
-                            return;
-
+                        if (block != _reactor) { originalSetter(block, value); return; }
                         _autoRestartOn = value;
+                        Storage.SetBool(_reactor, Config.BlockStateKey, value);
                     };
                     _switchSubscribed = true;
                 }
@@ -424,13 +433,11 @@ namespace TSUT.U235
         {
             if (_source == null)
                 return;
-            MyLog.Default.WriteLine($"[HMS.U235] SetOutputPower: {outputMW} MW, Source.Enabled: {_source.Enabled}, RemainingCapacity: {_source.RemainingCapacity}");
             _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, outputMW);
             var distributor = _reactor.CubeGrid.ResourceDistributor as MyResourceDistributorComponent;
             distributor?.MarkForUpdate();
             _reactor.SetDetailedInfoDirty();
             _reactor.RefreshCustomInfo();
-            MyLog.Default.WriteLine($"[HMS.U235] SetOutputPower done: MaxOutput now {_source.MaxOutput} MW");
         }
 
         private float HeatUpCycle(float deltaTime, bool process)
@@ -603,7 +610,7 @@ namespace TSUT.U235
             {
                 return true;
             }
-            return TryPullFuel();
+            return _autoRestartOn && TryPullFuel();
         }
 
         private bool TryPullFuel()
