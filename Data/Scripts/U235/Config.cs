@@ -6,29 +6,29 @@ namespace TSUT.HeatManagement
 {
     public class Config
     {
-        public static string Version = "1.0.1";
+        public static string Version = "1.0.2";
 
         public static readonly Guid CoreTempKey = new Guid("decafbad-0000-4c00-babe-c0ffee000011");
         public static readonly Guid BlockStateKey = new Guid("decafbad-0000-4c00-babe-c0ffee000012");
         public static readonly Guid FuelCooldown = new Guid("decafbad-0000-4c00-babe-c0ffee000013");
         public static readonly Guid ReactorState = new Guid("decafbad-0000-4c00-babe-c0ffee000014");
 
-        public string SYSTEM_VERSION = "1.0.1";
+        public string SYSTEM_VERSION = "1.0.2";
         public bool SYSTEM_AUTO_UPDATE = true;
-        public float CORE_TO_BLOCK_CONDUCTANCE_MODIFIER = 10f;
-        public float CORE_THERMAL_CAPACITY = 100; // J/g*°C
+        public float CORE_TO_BLOCK_CONDUCTANCE_MODIFIER = 25f;
+        public float CORE_THERMAL_CAPACITY = 100; // J/kg*°C
         public float REACTOR_MINIMAL_LAUNCH_TEMPERATURE = 0; // °C
         public float REACTOR_WORKING_TEMPERATURE = 800; // °C
         public float REACTOR_MELTDOWN_TEMPERATURE = 1250; // °C
         public float REACTOR_MAINTENANCE_TEMPERATURE = 100; // °C
         public float MAX_ENERGY_OUTPUT = 1000000; // J/kg fuel
-        public float ALHPA_MODIFIER = 0.66f; // mass ~ V^alpha
-        public float BETA_MODIFIER = 0.5f; // time ~ mass^beta
-        public float URANIUM_ENERGY = 82100000000; // Total U energy (J/g)
-        public float BURN_ENFFICIENCY = 0.005f; // 5%
+        public float ALHPA_MODIFIER = 1.15f; // mass ~ V^alpha
+        public float BETA_MODIFIER = 0.29f; // time ~ mass^beta
+        public float URANIUM_ENERGY = 82100000000; // Total U energy (J/kg)
+        public float BURN_ENFFICIENCY = 0.25f; // 25% burn efficiency
         public float BURN_TIME = 1800; // Baseline for burning time (s)
         public float INTERNAL_WASTE = 0.05f; // 5% of energy used to clear fuel waste
-        public float HEAT_WASTE = 0.3f; // 30% of energy wasted as heat
+        public float HEAT_WASTE = 0.67f; // 67% of energy wasted as heat (real reactor thermal efficiency ~33%)
         public float MELTDOWN_GRIND_TEMP_THRESHOLD = 200f; // Min core temp (°C) to trigger meltdown when grinding
         private static Config _instance;
         private const string CONFIG_FILE = "TSUT_U235_Config.xml";

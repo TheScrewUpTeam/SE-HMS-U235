@@ -48,7 +48,7 @@ namespace TSUT.U235
 
             var stopButton = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlButton, IMyReactor>("HeatReactor_Stop");
             stopButton.Title = MyStringId.GetOrCompute("Stop Reactor");
-            stopButton.Tooltip = MyStringId.GetOrCompute("Abort and begin stopping process, all the fuel will be wasted");
+            stopButton.Tooltip = MyStringId.GetOrCompute("Abort and begin cooldown. Fuel returned if still heating up, wasted if already running.");
             stopButton.SupportsMultipleBlocks = false;
             stopButton.Visible = b => b.GameLogic?.GetAs<ReactorGameLogic>() != null;
             stopButton.Enabled = b => b.GameLogic?.GetAs<ReactorGameLogic>()?.IsReadyToStop ?? false;

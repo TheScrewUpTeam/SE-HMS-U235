@@ -56,9 +56,9 @@ namespace TSUT.U235
         private MyResourceSourceComponent _source;
         private ReactorState _state;
 
-        const float FUEL_REFERENCE = 1f;
+        const float FUEL_REFERENCE = 0.08f;
         const float VOLUME_REFERENCE = 0.125f;
-        const float LONGATION_REFERENCE = 600;
+        const float LONGATION_REFERENCE = 2240;
 
         private float FuelCountdown
         {
