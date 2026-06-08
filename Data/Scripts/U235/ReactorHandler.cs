@@ -82,7 +82,7 @@ namespace TSUT.U235
         {
             get
             {
-                return State == ReactorState.Idle && HasFuel() && IsTemperatureLaunchReady();
+                return State == ReactorState.Idle && HasFuelInInventory() && IsTemperatureLaunchReady();
             }
         }
 
@@ -132,24 +132,6 @@ namespace TSUT.U235
             _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, 0f);
             MyLog.Default.WriteLine($"[HMS.U235] Source found: {_source}, Enabled: {_source.Enabled}, MaxOutput: {_source.MaxOutput}, RemainingCapacity: {_source.RemainingCapacity}");
         }
-
-        // private void InitiateSource()
-        // {
-        //     _source = new MyResourceSourceComponent();
-        //     var sourceInfo = new MyResourceSourceInfo
-        //     {
-        //         ResourceTypeId = MyResourceDistributorComponent.ElectricityId,
-        //         DefinedOutput = 0f,
-        //         ProductionToCapacityMultiplier = 1f,
-        //     };
-        //     _source.Init(MyStringHash.GetOrCompute("Reactor"), sourceInfo);
-        //     _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, GetOptimalPowerOutput(1));
-        //     MyLog.Default.WriteLine($"[HMS.U235] Source created: {_source}");
-        //     var distributor = _reactor.CubeGrid.ResourceDistributor as MyResourceDistributorComponent;
-        //     distributor?.AddSource(_source);
-        //     distributor.MarkForUpdate();
-        //     MyLog.Default.WriteLine($"[HMS.U235] Source added to distributor: {_source}");
-        // }
 
         private void ComputeFuelPlan(IMyReactor block, out float batchFuelAmouont, out float batchBurningTime)
         {
@@ -285,9 +267,11 @@ namespace TSUT.U235
 
         private void OnEnabledChanged(IMyTerminalBlock block)
         {
-            _autoRestartOn = _reactor.Enabled;
-            Storage.SetBool(_reactor, Config.BlockStateKey, _reactor.Enabled);
-            _reactor.Enabled = false;
+            if (_reactor.Enabled)
+            {
+                MyLog.Default.WriteLine($"[HMS.U235] OnEnabledChanged: external enable detected, forcing back to false");
+                _reactor.Enabled = false;
+            }
         }
 
         private void OnCustomControlGetter(IMyTerminalBlock topBlock, List<IMyTerminalControl> controls)
@@ -303,18 +287,25 @@ namespace TSUT.U235
                     if (onOffControl == null)
                         continue;
 
-                    onOffControl.Getter += (block) =>
+                    var originalGetter = onOffControl.Getter;
+                    var originalSetter = onOffControl.Setter;
+                    onOffControl.OnText = MyStringId.GetOrCompute("Auto");
+                    onOffControl.OffText = MyStringId.GetOrCompute("Manual");
+
+                    onOffControl.Getter = (block) =>
                     {
                         if (block == _reactor)
+                        {
+                            MyLog.Default.WriteLine($"[HMS.U235] OnOff Getter called for reactor, returning _autoRestartOn={_autoRestartOn}");
                             return _autoRestartOn;
-                        return (block as IMyFunctionalBlock).Enabled;
+                        }
+                        return originalGetter(block);
                     };
-                    onOffControl.Setter += (block, value) =>
+                    onOffControl.Setter = (block, value) =>
                     {
-                        if (block != _reactor)
-                            return;
-
+                        if (block != _reactor) { originalSetter(block, value); return; }
                         _autoRestartOn = value;
+                        Storage.SetBool(_reactor, Config.BlockStateKey, value);
                     };
                     _switchSubscribed = true;
                 }
@@ -424,13 +415,11 @@ namespace TSUT.U235
         {
             if (_source == null)
                 return;
-            MyLog.Default.WriteLine($"[HMS.U235] SetOutputPower: {outputMW} MW, Source.Enabled: {_source.Enabled}, RemainingCapacity: {_source.RemainingCapacity}");
             _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, outputMW);
             var distributor = _reactor.CubeGrid.ResourceDistributor as MyResourceDistributorComponent;
             distributor?.MarkForUpdate();
             _reactor.SetDetailedInfoDirty();
             _reactor.RefreshCustomInfo();
-            MyLog.Default.WriteLine($"[HMS.U235] SetOutputPower done: MaxOutput now {_source.MaxOutput} MW");
         }
 
         private float HeatUpCycle(float deltaTime, bool process)
@@ -552,7 +541,7 @@ namespace TSUT.U235
             switch (State)
             {
                 case ReactorState.Idle:
-                    if (!HasFuel())
+                    if (!HasFuelInInventory())
                     {
                         _lastLaunchFailReason = $"Reactor has not enough fuel, required {_batchFuelAmouont}kg of Uranium to launch";
                     }
@@ -570,17 +559,17 @@ namespace TSUT.U235
 
         private bool TryStartSequence()
         {
-            if (!HasFuel())
-            {
-                return false;
-            }
             if (!IsTemperatureLaunchReady())
-            {
                 return false;
-            }
+
+            if (!HasFuelInInventory() && (!_autoRestartOn || !TryPullFuel()))
+                return false;
+
             MyFixedPoint amount = (MyFixedPoint)_batchFuelAmouont;
             var uraniumId = new MyDefinitionId(typeof(MyObjectBuilder_Ingot), "Uranium");
             var fuel = _inventory.FindItem(uraniumId);
+            if (fuel == null)
+                return false;
             _inventory.RemoveItemAmount(fuel, amount);
             _source.SetRemainingCapacityByType(MyResourceDistributorComponent.ElectricityId, float.PositiveInfinity);
             State = ReactorState.HeatingUp;
@@ -594,16 +583,11 @@ namespace TSUT.U235
             return CoreTemp >= Config.Instance.REACTOR_MINIMAL_LAUNCH_TEMPERATURE;
         }
 
-        private bool HasFuel()
+        private bool HasFuelInInventory()
         {
             MyFixedPoint amount = (MyFixedPoint)_batchFuelAmouont;
             var uraniumId = new MyDefinitionId(typeof(MyObjectBuilder_Ingot), "Uranium");
-            var fuel = _inventory.GetItemAmount(uraniumId);
-            if (fuel >= amount)
-            {
-                return true;
-            }
-            return TryPullFuel();
+            return _inventory.GetItemAmount(uraniumId) >= amount;
         }
 
         private bool TryPullFuel()
@@ -616,8 +600,7 @@ namespace TSUT.U235
                 var fuel = container.GetInventory().FindItem(uraniumId);
                 if (fuel == null || fuel.Amount < amount)
                     continue;
-                _inventory.TransferItemFrom(container.GetInventory(), fuel, amount);
-                return true;
+                return _inventory.TransferItemFrom(container.GetInventory(), fuel, amount);
             }
             return false;
         }
