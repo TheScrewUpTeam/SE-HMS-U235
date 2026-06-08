@@ -391,6 +391,7 @@ namespace TSUT.U235
                 NeedsUpdate &= ~MyEntityUpdateEnum.EACH_FRAME;
         }
 
+
         private float CoolingDownCycle(float deltaTime, bool process)
         {
             var needToTransfer = (CoreTemp - Config.Instance.REACTOR_MAINTENANCE_TEMPERATURE) * _coreTermalCapacity;
