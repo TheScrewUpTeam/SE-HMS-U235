@@ -13,6 +13,8 @@ using VRage;
 using VRage.Game;
 using VRage.Game.ModAPI;
 using VRage.Utils;
+using IngameInventoryItem = VRage.Game.ModAPI.Ingame.MyInventoryItem;
+using IngameItemType = VRage.Game.ModAPI.Ingame.MyItemType;
 using static TSUT.HeatManagement.HmsApi;
 
 namespace TSUT.U235
@@ -41,6 +43,7 @@ namespace TSUT.U235
         private float _coreTermalCapacity;
         private float _burningCycleCountDown;
         private float _lastTempChange;
+        private float _pullCooldown = 0f;
         private MyResourceSourceComponent _source;
         private ReactorState _state;
 
@@ -101,6 +104,8 @@ namespace TSUT.U235
 
         public void ManualStop()
         {
+            _autoRestartOn = false;
+            Storage.SetBool(_reactor, Config.BlockStateKey, false);
             State = ReactorState.CoolingDown;
         }
 
@@ -176,6 +181,7 @@ namespace TSUT.U235
             float heatChange = internalUse - ambientExchange + neighborExchange + networkExchange;
 
             builder.AppendLine("--- HMS.U235 ---");
+            builder.AppendLine($"Mode: {(_autoRestartOn ? "AUTO" : "MANUAL")}");
             builder.AppendLine($"Reactor state: {State}");
             switch (State)
             {
@@ -341,7 +347,20 @@ namespace TSUT.U235
                     var idleInternalExchange = getInternalExchangeEnergy(deltaTime);
                     if (_autoRestartOn && process)
                     {
-                        TryStartSequence();
+                        if (HasFuelInInventory())
+                        {
+                            _pullCooldown = 0f;
+                            TryStartSequence();
+                        }
+                        else
+                        {
+                            _pullCooldown += deltaTime;
+                            if (_pullCooldown >= 2f)
+                            {
+                                _pullCooldown = 0f;
+                                TryStartSequence();
+                            }
+                        }
                     }
                     change += idleInternalExchange / _blockTermalCapacity;
                     if (process)
@@ -594,29 +613,41 @@ namespace TSUT.U235
         {
             MyFixedPoint amount = (MyFixedPoint)_batchFuelAmouont;
             var uraniumId = new MyDefinitionId(typeof(MyObjectBuilder_Ingot), "Uranium");
-            var containers = GetConnectedContainers(_reactor);
-            foreach (var container in containers)
-            {
-                var fuel = container.GetInventory().FindItem(uraniumId);
-                if (fuel == null || fuel.Amount < amount)
-                    continue;
-                return _inventory.TransferItemFrom(container.GetInventory(), fuel, amount);
-            }
-            return false;
-        }
-
-        private List<IMyCargoContainer> GetConnectedContainers(IMyCubeBlock target)
-        {
-            var allContainers = target.CubeGrid.GetFatBlocks<IMyCargoContainer>();
-            var result = new List<IMyCargoContainer>();
+            var allContainers = _reactor.CubeGrid.GetFatBlocks<IMyCargoContainer>();
+            MyLog.Default.WriteLine($"[HMS.U235] TryPullFuel: need {amount}kg, found {allContainers.Count()} containers on grid");
             foreach (var container in allContainers)
             {
-                if (MyVisualScriptLogicProvider.IsConveyorConnected(target.Name, container.Name))
+                if (!MyVisualScriptLogicProvider.IsConveyorConnected(_reactor.Name, container.Name))
                 {
-                    result.Add(container);
+                    MyLog.Default.WriteLine($"[HMS.U235] TryPullFuel: container '{container.DisplayNameText}' not conveyor-connected, skipping");
+                    continue;
                 }
+                var containerInv = container.GetInventory();
+                var fuel = containerInv.FindItem(uraniumId);
+                MyLog.Default.WriteLine($"[HMS.U235] TryPullFuel: container '{container.DisplayNameText}' has fuel={fuel?.Amount.ToString() ?? "none"}");
+                if (fuel == null || fuel.Amount < amount)
+                    continue;
+                var items = new List<IngameInventoryItem>();
+                containerInv.GetItems(items);
+                var uraniumType = new IngameItemType("MyObjectBuilder_Ingot", "Uranium");
+                int itemIndex = -1;
+                for (int i = 0; i < items.Count; i++)
+                {
+                    if (items[i].Type == uraniumType)
+                    {
+                        itemIndex = i;
+                        break;
+                    }
+                }
+                if (itemIndex < 0)
+                    continue;
+                bool transferred = _inventory.TransferItemFrom(containerInv, itemIndex, null, null, amount, checkConnection: false);
+                MyLog.Default.WriteLine($"[HMS.U235] TryPullFuel: TransferItemFrom result={transferred}");
+                if (transferred)
+                    return true;
             }
-            return result;
+            MyLog.Default.WriteLine($"[HMS.U235] TryPullFuel: failed — no valid container found");
+            return false;
         }
 
         public override void ReactOnNewHeat(float heat)
