@@ -50,6 +50,9 @@ namespace TSUT.U235
         private float _lastTempChange;
         private float _pullCooldown = 0f;
         private bool _meltdownTriggered = false;
+        private float _blinkTimer = 0f;
+        private bool _smokeActive = false;
+        private bool _blinkFrameUpdateRegistered = false;
         private MyResourceSourceComponent _source;
         private ReactorState _state;
 
@@ -361,9 +364,29 @@ namespace TSUT.U235
         public void ReactOnNewHeat(float heat)
         {
             _api?.Effects.UpdateBlockHeatLight(_reactor, heat);
-            UpdateEmissiveState();
+            bool shouldBlink = State == ReactorState.Running && CoreTemp > Config.Instance.REACTOR_WORKING_TEMPERATURE && !_meltdownTriggered;
+            SetBlinkFrameUpdate(shouldBlink);
+            if (!shouldBlink)
+                UpdateEmissiveState();
+            UpdateSmokeEffect();
             _reactor?.SetDetailedInfoDirty();
             _reactor?.RefreshCustomInfo();
+        }
+
+        public override void UpdateBeforeSimulation()
+        {
+            _blinkTimer += 1f / 60f;
+            UpdateEmissiveState();
+        }
+
+        private void SetBlinkFrameUpdate(bool active)
+        {
+            if (active == _blinkFrameUpdateRegistered) return;
+            _blinkFrameUpdateRegistered = active;
+            if (active)
+                NeedsUpdate |= MyEntityUpdateEnum.EACH_FRAME;
+            else
+                NeedsUpdate &= ~MyEntityUpdateEnum.EACH_FRAME;
         }
 
         private float CoolingDownCycle(float deltaTime, bool process)
@@ -605,6 +628,14 @@ namespace TSUT.U235
                 case ReactorState.CoolingDown: color = Color.Cyan;             emissivity = 0.7f; break;
                 default: return;
             }
+            if (_blinkFrameUpdateRegistered)
+            {
+                float workingTemp = Config.Instance.REACTOR_WORKING_TEMPERATURE;
+                float meltdownTemp = Config.Instance.REACTOR_MELTDOWN_TEMPERATURE;
+                float t = Math.Min((CoreTemp - workingTemp) / (meltdownTemp - 50f - workingTemp), 1f);
+                float period = 2.0f - 1.5f * t;
+                emissivity = 0.5f + 0.5f * (float)Math.Sin(2 * Math.PI * _blinkTimer / period);
+            }
             block.UpdateEmissiveParts(renderObjectId, emissivity, color, color);
         }
 
@@ -613,6 +644,22 @@ namespace TSUT.U235
             if (block.FatBlock != _reactor || _meltdownTriggered) return;
             if (!_reactor.IsFunctional && CoreTemp >= Config.Instance.MELTDOWN_GRIND_TEMP_THRESHOLD)
                 TriggerMeltdown();
+        }
+
+        private void UpdateSmokeEffect()
+        {
+            if (_api == null) return;
+            bool shouldSmoke = !_meltdownTriggered && CoreTemp >= Config.Instance.REACTOR_MELTDOWN_TEMPERATURE - 200;
+            if (shouldSmoke && !_smokeActive)
+            {
+                _api.Effects.InstantiateSmoke(_reactor);
+                _smokeActive = true;
+            }
+            else if (!shouldSmoke && _smokeActive)
+            {
+                _api.Effects.RemoveSmoke(_reactor);
+                _smokeActive = false;
+            }
         }
 
         private void OnGridBlockDamaged(IMySlimBlock block, float damage, MyHitInfo? hitInfo, long attackerId)
