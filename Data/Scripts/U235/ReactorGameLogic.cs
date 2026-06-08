@@ -49,6 +49,7 @@ namespace TSUT.U235
         private float _burningCycleCountDown;
         private float _lastTempChange;
         private float _pullCooldown = 0f;
+        private bool _meltdownTriggered = false;
         private MyResourceSourceComponent _source;
         private ReactorState _state;
 
@@ -127,6 +128,8 @@ namespace TSUT.U235
             _reactor.Enabled = false;
             _reactor.EnabledChanged += OnEnabledChanged;
             _reactor.AppendingCustomInfo += OnAppendCustomInfo;
+            _reactor.CubeGrid.OnBlockIntegrityChanged += OnBlockIntegrityChanged;
+            _reactor.CubeGrid.OnGridBlockDamaged += OnGridBlockDamaged;
 
             ComputeFuelPlan(_reactor, out _batchFuelAmouont, out _batchBurningTime);
             _coreTermalCapacity = GetCoreThermalCapacity();
@@ -147,6 +150,8 @@ namespace TSUT.U235
             {
                 _reactor.EnabledChanged -= OnEnabledChanged;
                 _reactor.AppendingCustomInfo -= OnAppendCustomInfo;
+                _reactor.CubeGrid.OnBlockIntegrityChanged -= OnBlockIntegrityChanged;
+                _reactor.CubeGrid.OnGridBlockDamaged -= OnGridBlockDamaged;
             }
             _reactor = null;
             _api = null;
@@ -223,6 +228,11 @@ namespace TSUT.U235
                     AddCoolingDownInfo(builder);
                     break;
             }
+            float meltdownTemp = Config.Instance.REACTOR_MELTDOWN_TEMPERATURE;
+            if (CoreTemp >= meltdownTemp - 100)
+                builder.AppendLine("!!! CRITICAL: MELTDOWN IMMINENT !!!");
+            else if (CoreTemp >= meltdownTemp - 200)
+                builder.AppendLine("WARNING: Core temperature approaching critical!");
             builder.AppendLine($"Core Temperature: {CoreTemp:F2} °C");
             builder.AppendLine("");
             builder.AppendLine($"Temperature: {currentHeat:F2} °C");
@@ -373,6 +383,11 @@ namespace TSUT.U235
 
         private float RunningCycle(float deltaTime, bool process)
         {
+            if (process && CoreTemp >= Config.Instance.REACTOR_MELTDOWN_TEMPERATURE)
+            {
+                TriggerMeltdown();
+                return 0f;
+            }
             var currentPower = GetCurrentEnergyOutput(deltaTime);
             var internalUse = GetCurrentHeatChange(deltaTime);
             if (process)
@@ -409,6 +424,11 @@ namespace TSUT.U235
 
         private float HeatUpCycle(float deltaTime, bool process)
         {
+            if (process && CoreTemp >= Config.Instance.REACTOR_MELTDOWN_TEMPERATURE)
+            {
+                TriggerMeltdown();
+                return 0f;
+            }
             float change = 0;
             var extTemp = _api.Utils.GetHeat(_reactor);
             if (extTemp > CoreTemp)
@@ -487,9 +507,9 @@ namespace TSUT.U235
         private float GetEnergyOutputAtTemp(float temp, float deltaTime)
         {
             float optimalPower = GetOptimalPowerOutput(deltaTime);
-            float temperatureModifier = Math.Min(Math.Max(temp / Config.Instance.REACTOR_WORKING_TEMPERATURE, 0f), 1f);
+            float temperatureModifier = Math.Max(temp / Config.Instance.REACTOR_WORKING_TEMPERATURE, 0f);
             float basePower = temperatureModifier * optimalPower;
-            float ignitionAssist = (1f - temperatureModifier) * 0.1f * optimalPower;
+            float ignitionAssist = temperatureModifier < 1f ? (1f - temperatureModifier) * 0.1f * optimalPower : 0f;
             return basePower + ignitionAssist;
         }
 
@@ -570,6 +590,11 @@ namespace TSUT.U235
             var block = _reactor as MyCubeBlock;
             if (block?.Render?.RenderObjectIDs == null || block.Render.RenderObjectIDs.Length == 0) return;
             uint renderObjectId = block.Render.RenderObjectIDs[0];
+            if (_meltdownTriggered)
+            {
+                block.UpdateEmissiveParts(renderObjectId, 1.0f, Color.Red, Color.Red);
+                return;
+            }
             Color color;
             float emissivity;
             switch (_state)
@@ -581,6 +606,78 @@ namespace TSUT.U235
                 default: return;
             }
             block.UpdateEmissiveParts(renderObjectId, emissivity, color, color);
+        }
+
+        private void OnBlockIntegrityChanged(IMySlimBlock block)
+        {
+            if (block.FatBlock != _reactor || _meltdownTriggered) return;
+            if (!_reactor.IsFunctional && CoreTemp >= Config.Instance.MELTDOWN_GRIND_TEMP_THRESHOLD)
+                TriggerMeltdown();
+        }
+
+        private void OnGridBlockDamaged(IMySlimBlock block, float damage, MyHitInfo? hitInfo, long attackerId)
+        {
+            if (block.FatBlock != _reactor || _meltdownTriggered) return;
+            if (!_reactor.IsFunctional && CoreTemp >= Config.Instance.MELTDOWN_GRIND_TEMP_THRESHOLD)
+                TriggerMeltdown();
+        }
+
+        private void TriggerMeltdown()
+        {
+            if (_meltdownTriggered) return;
+            _meltdownTriggered = true;
+            if (!MyAPIGateway.Session.IsServer) return;
+            MyLog.Default.WriteLine($"[HMS.U235] [{_reactor?.DisplayNameText}] MELTDOWN at {CoreTemp:F0}°C");
+            UpdateEmissiveState();
+            var secondaryPositions = SpawnNeighborContainers();
+            MyVisualScriptLogicProvider.CreateExplosion(_reactor.GetPosition(), 10f, 1000000);
+            foreach (var pos in secondaryPositions)
+                MyVisualScriptLogicProvider.CreateExplosion(pos, 5f, 100000);
+        }
+
+        private List<Vector3D> SpawnNeighborContainers()
+        {
+            var grid = _reactor.CubeGrid;
+            string containerSubtype = grid.GridSizeEnum == MyCubeSize.Large ? "LargeBlockSmallContainer" : "SmallBlockSmallContainer";
+            var spawnedPositions = new List<Vector3D>();
+            foreach (var pos in GetNeighborPositions(_reactor.SlimBlock.Min, _reactor.SlimBlock.Max))
+            {
+                var existing = grid.GetCubeBlock(pos);
+                if (existing != null)
+                    grid.RemoveBlock(existing, false);
+                if (!grid.CanAddCube(pos))
+                    continue;
+                var ob = new MyObjectBuilder_CargoContainer { SubtypeName = containerSubtype, Min = pos };
+                var slim = grid.AddBlock(ob, false);
+                if (slim?.FatBlock != null)
+                {
+                    slim.FatBlock.GetInventory()?.AddItems((MyFixedPoint)5, new MyObjectBuilder_AmmoMagazine { SubtypeName = "LargeCalibreAmmo" });
+                    spawnedPositions.Add(grid.GridIntegerToWorld(pos));
+                }
+            }
+            return spawnedPositions;
+        }
+
+        private IEnumerable<Vector3I> GetNeighborPositions(Vector3I min, Vector3I max)
+        {
+            for (int y = min.Y; y <= max.Y; y++)
+                for (int z = min.Z; z <= max.Z; z++)
+                {
+                    yield return new Vector3I(min.X - 1, y, z);
+                    yield return new Vector3I(max.X + 1, y, z);
+                }
+            for (int x = min.X; x <= max.X; x++)
+                for (int z = min.Z; z <= max.Z; z++)
+                {
+                    yield return new Vector3I(x, min.Y - 1, z);
+                    yield return new Vector3I(x, max.Y + 1, z);
+                }
+            for (int x = min.X; x <= max.X; x++)
+                for (int y = min.Y; y <= max.Y; y++)
+                {
+                    yield return new Vector3I(x, y, min.Z - 1);
+                    yield return new Vector3I(x, y, max.Z + 1);
+                }
         }
 
         private string FormatEnergyPerSecond(double value)
