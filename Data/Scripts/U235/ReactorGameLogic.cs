@@ -77,7 +77,6 @@ namespace TSUT.U235
             {
                 _state = value;
                 Storage.SetFloat(_reactor, Config.ReactorState, (float)value);
-                MyLog.Default.WriteLine($"[HMS.U235] [{_reactor?.DisplayNameText}] State → {value}");
                 UpdateEmissiveState();
             }
         }
@@ -166,8 +165,12 @@ namespace TSUT.U235
             _api = api;
             _adapter = adapter;
             _blockTermalCapacity = api.Utils.GetThermalCapacity(_reactor);
+            _coreTermalCapacity = GetCoreThermalCapacity();
+            float blockHeat = api.Utils.GetHeat(_reactor);
             if (_coreTemp == 0f)
-                _coreTemp = api.Utils.GetHeat(_reactor);
+                _coreTemp = blockHeat;
+            else if (blockHeat == 0f)
+                api.Utils.SetHeat(_reactor, _coreTemp, silent: true);
         }
 
         private void InitiateSource()
@@ -177,7 +180,6 @@ namespace TSUT.U235
             // Mod manages fuel externally — vanilla capacity tracking would clamp MaxOutput to 0 after inventory is emptied
             _source.SetRemainingCapacityByType(MyResourceDistributorComponent.ElectricityId, float.PositiveInfinity);
             _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, 0f);
-            MyLog.Default.WriteLine($"[HMS.U235] Source found: {_source}, Enabled: {_source.Enabled}, MaxOutput: {_source.MaxOutput}, RemainingCapacity: {_source.RemainingCapacity}");
         }
 
         private void ComputeFuelPlan(IMyReactor block, out float batchFuelAmouont, out float batchBurningTime)
@@ -436,13 +438,11 @@ namespace TSUT.U235
         private void SetOutputPower(float outputMW)
         {
             if (_source == null) return;
-            MyLog.Default.WriteLine($"[HMS.U235] SetOutputPower: {outputMW} MW, Source.Enabled: {_source.Enabled}, RemainingCapacity: {_source.RemainingCapacity}");
             _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, outputMW);
             var distributor = _reactor.CubeGrid.ResourceDistributor as MyResourceDistributorComponent;
             distributor?.MarkForUpdate();
             _reactor.SetDetailedInfoDirty();
             _reactor.RefreshCustomInfo();
-            MyLog.Default.WriteLine($"[HMS.U235] SetOutputPower done: MaxOutput now {_source.MaxOutput} MW");
         }
 
         private float HeatUpCycle(float deltaTime, bool process)
@@ -481,14 +481,13 @@ namespace TSUT.U235
             var extTemp = _api.Utils.GetHeat(_reactor);
             float conductivity = _api.Utils.GetHmsConfig().HEATPIPE_CONDUCTIVITY * Config.Instance.CORE_TO_BLOCK_CONDUCTANCE_MODIFIER;
             float tempDiff = CoreTemp - extTemp;
-            float energyTransferred = tempDiff * conductivity * deltaTime;
-            energyTransferred = ApplyExchangeLimit(energyTransferred, _coreTermalCapacity, _blockTermalCapacity, tempDiff);
+            float energyTransferred = ApplyExchangeLimit(tempDiff * conductivity * deltaTime, _coreTermalCapacity, _blockTermalCapacity, tempDiff);
             return energyTransferred;
         }
 
         public float ApplyExchangeLimit(float energyDelta, float capA, float capB, float tempDiff)
         {
-            if (energyDelta > 0)
+            if (energyDelta >= 0)
                 return Math.Min(energyDelta, tempDiff * capB / 2);
             else
                 return Math.Max(energyDelta, tempDiff * capA / 2);
@@ -600,10 +599,7 @@ namespace TSUT.U235
                 if (itemIndex < 0) continue;
                 bool transferred = _inventory.TransferItemFrom(containerInv, itemIndex, null, null, amount, checkConnection: false);
                 if (transferred)
-                {
-                    MyLog.Default.WriteLine($"[HMS.U235] [{_reactor?.DisplayNameText}] Pulled {amount}kg fuel from '{container.DisplayNameText}', auto-restarting");
                     return true;
-                }
             }
             return false;
         }
@@ -698,7 +694,16 @@ namespace TSUT.U235
                 var slim = grid.AddBlock(ob, false);
                 if (slim?.FatBlock != null)
                 {
-                    slim.FatBlock.GetInventory()?.AddItems((MyFixedPoint)5, new MyObjectBuilder_AmmoMagazine { SubtypeName = "LargeCalibreAmmo" });
+                    var inventory = slim.FatBlock.GetInventory();
+                    if (inventory != null)
+                    {
+                        var ammoId = new MyDefinitionId(typeof(MyObjectBuilder_AmmoMagazine), "LargeCalibreAmmo");
+                        MyPhysicalItemDefinition itemDef;
+                        int count = 5;
+                        if (MyDefinitionManager.Static.TryGetPhysicalItemDefinition(ammoId, out itemDef) && itemDef.Volume > 0f)
+                            count = Math.Max(1, (int)((float)inventory.MaxVolume / itemDef.Volume));
+                        inventory.AddItems((MyFixedPoint)count, new MyObjectBuilder_AmmoMagazine { SubtypeName = "LargeCalibreAmmo" });
+                    }
                     spawnedPositions.Add(grid.GridIntegerToWorld(pos));
                 }
             }
