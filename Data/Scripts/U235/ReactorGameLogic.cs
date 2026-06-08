@@ -38,6 +38,7 @@ namespace TSUT.U235
         HmsApi _api;
         ReactorAdapter _adapter;
         IMyInventory _inventory;
+        private IMyInventory Inventory => _inventory ?? (_inventory = _reactor?.GetInventory(0));
 
         private bool _autoRestartOn = false;
         private float _batchFuelAmouont = 1f;
@@ -112,7 +113,7 @@ namespace TSUT.U235
             _autoRestartOn = false;
             Storage.SetBool(_reactor, Config.BlockStateKey, false);
             if (State == ReactorState.HeatingUp)
-                _inventory.AddItems((MyFixedPoint)_batchFuelAmouont, new MyObjectBuilder_Ingot { SubtypeName = "Uranium" });
+                Inventory.AddItems((MyFixedPoint)_batchFuelAmouont, new MyObjectBuilder_Ingot { SubtypeName = "Uranium" });
             State = ReactorState.CoolingDown;
         }
 
@@ -554,9 +555,9 @@ namespace TSUT.U235
 
             MyFixedPoint amount = (MyFixedPoint)_batchFuelAmouont;
             var uraniumId = new MyDefinitionId(typeof(MyObjectBuilder_Ingot), "Uranium");
-            var fuel = _inventory.FindItem(uraniumId);
+            var fuel = Inventory.FindItem(uraniumId);
             if (fuel == null) return false;
-            _inventory.RemoveItemAmount(fuel, amount);
+            Inventory.RemoveItemAmount(fuel, amount);
             _source.SetRemainingCapacityByType(MyResourceDistributorComponent.ElectricityId, float.PositiveInfinity);
             State = ReactorState.HeatingUp;
             SetOutputPower(0f);
@@ -570,7 +571,7 @@ namespace TSUT.U235
         {
             MyFixedPoint amount = (MyFixedPoint)_batchFuelAmouont;
             var uraniumId = new MyDefinitionId(typeof(MyObjectBuilder_Ingot), "Uranium");
-            return _inventory.GetItemAmount(uraniumId) >= amount;
+            return Inventory.GetItemAmount(uraniumId) >= amount;
         }
 
         private bool TryPullFuel()
@@ -598,7 +599,7 @@ namespace TSUT.U235
                     }
                 }
                 if (itemIndex < 0) continue;
-                bool transferred = _inventory.TransferItemFrom(containerInv, itemIndex, null, null, amount, checkConnection: false);
+                bool transferred = Inventory.TransferItemFrom(containerInv, itemIndex, null, null, amount, checkConnection: false);
                 if (transferred)
                     return true;
             }
