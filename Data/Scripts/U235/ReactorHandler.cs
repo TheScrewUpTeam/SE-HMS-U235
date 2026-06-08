@@ -126,9 +126,11 @@ namespace TSUT.U235
         private void InitiateSource()
         {
             _source = _reactor.Components.Get<MyResourceSourceComponent>();
-            _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, GetOptimalPowerOutput(1) / 1000000);
             _source.Enabled = true;
-            MyLog.Default.WriteLine($"[HMS.U235] Source found: {_source}");
+            // Mod manages fuel externally — vanilla capacity tracking would clamp MaxOutput to 0 after inventory is emptied
+            _source.SetRemainingCapacityByType(MyResourceDistributorComponent.ElectricityId, float.PositiveInfinity);
+            _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, 0f);
+            MyLog.Default.WriteLine($"[HMS.U235] Source found: {_source}, Enabled: {_source.Enabled}, MaxOutput: {_source.MaxOutput}, RemainingCapacity: {_source.RemainingCapacity}");
         }
 
         // private void InitiateSource()
@@ -382,6 +384,7 @@ namespace TSUT.U235
             MyLog.Default.WriteLine($"[HMS.U235] CoolingDown: NTT:{needToTransfer}, CBT:{canBeTransferred}, RT: {realTransfer}");
             if (process)
             {
+                SetOutputPower(0);
                 CoreTemp -= realTransfer / _coreTermalCapacity;
                 if (CoreTemp <= Config.Instance.REACTOR_MAINTENANCE_TEMPERATURE)
                 {
@@ -419,24 +422,15 @@ namespace TSUT.U235
 
         private void SetOutputPower(float outputMW)
         {
-            MyLog.Default.WriteLine($"[HMS.U235] Source {_source}");
-            MyLog.Default.WriteLine($"[HMS.U235] Source updating, ID: {MyResourceDistributorComponent.ElectricityId}, Output: {outputMW}");
             if (_source == null)
                 return;
-            _source.SetOutputByType(MyResourceDistributorComponent.ElectricityId, outputMW);
-            _source.SetMaxOutput(55);
-            _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, 22);
-            MyLog.Default.WriteLine($"[HMS.U235] Source updated... {_source.MaxOutput}");
-        }
-
-        private void ShowAllSources()
-        {
+            MyLog.Default.WriteLine($"[HMS.U235] SetOutputPower: {outputMW} MW, Source.Enabled: {_source.Enabled}, RemainingCapacity: {_source.RemainingCapacity}");
+            _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, outputMW);
             var distributor = _reactor.CubeGrid.ResourceDistributor as MyResourceDistributorComponent;
-            if (distributor != null)
-            {
-                var sourcesCount = distributor.GetSourceCount(MyResourceDistributorComponent.ElectricityId, MyStringHash.GetOrCompute("Reactor"));
-                MyLog.Default.WriteLine($"[HMS.U235.DEBUG] Total sources on grid: {sourcesCount}");
-            }
+            distributor?.MarkForUpdate();
+            _reactor.SetDetailedInfoDirty();
+            _reactor.RefreshCustomInfo();
+            MyLog.Default.WriteLine($"[HMS.U235] SetOutputPower done: MaxOutput now {_source.MaxOutput} MW");
         }
 
         private float HeatUpCycle(float deltaTime, bool process)
@@ -588,7 +582,9 @@ namespace TSUT.U235
             var uraniumId = new MyDefinitionId(typeof(MyObjectBuilder_Ingot), "Uranium");
             var fuel = _inventory.FindItem(uraniumId);
             _inventory.RemoveItemAmount(fuel, amount);
+            _source.SetRemainingCapacityByType(MyResourceDistributorComponent.ElectricityId, float.PositiveInfinity);
             State = ReactorState.HeatingUp;
+            SetOutputPower(0f);
             _lastLaunchFailReason = "";
             return true;
         }
