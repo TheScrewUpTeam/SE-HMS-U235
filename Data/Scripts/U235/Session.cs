@@ -80,7 +80,28 @@ namespace TSUT.U235
         {
             if (controls.Any(c => c.Id == "HeatReactor_Launch"))
                 return;
-            
+
+            foreach (var control in controls)
+            {
+                if (control.Id == "OnOff")
+                {
+                    var originalVisible = control.Visible;
+                    control.Visible = b => !(b is IMyReactor) && (originalVisible == null || originalVisible(b));
+                    break;
+                }
+            }
+
+            var autoSwitch = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlOnOffSwitch, IMyReactor>("ReactorAutoMode");
+            autoSwitch.Title = MyStringId.GetOrCompute("Mode");
+            autoSwitch.OnText = MyStringId.GetOrCompute("Auto");
+            autoSwitch.OffText = MyStringId.GetOrCompute("Manual");
+            autoSwitch.SupportsMultipleBlocks = false;
+            autoSwitch.Visible = b => GetReactorHandler(b) != null;
+            autoSwitch.Enabled = b => GetReactorHandler(b) != null;
+            autoSwitch.Getter = b => { var h = GetReactorHandler(b); return h != null && h.AutoRestartOn; };
+            autoSwitch.Setter = (b, value) => { var h = GetReactorHandler(b); if (h != null) h.AutoRestartOn = value; };
+            controls.Add(autoSwitch);
+
             var launchButton = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlButton, IMyReactor>("HeatReactor_Launch");
             launchButton.Title = MyStringId.GetOrCompute("Launch Reactor");
             launchButton.Tooltip = MyStringId.GetOrCompute("Begin the reactor warm-up and start power generation.");

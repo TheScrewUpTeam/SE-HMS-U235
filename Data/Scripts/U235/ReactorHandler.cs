@@ -34,7 +34,6 @@ namespace TSUT.U235
         IMyInventory _inventory;
 
         private bool _autoRestartOn = false;
-        private bool _switchSubscribed = false;
         private float _batchFuelAmouont = 1f; // kg
         private float _batchBurningTime;
         private float _coreTemp;
@@ -120,7 +119,6 @@ namespace TSUT.U235
             _autoRestartOn = Storage.GetBool(block, Config.BlockStateKey, false);
             _state = (ReactorState)Math.Round(Storage.GetFloat(block, Config.ReactorState));
             _burningCycleCountDown = Storage.GetFloat(block, Config.FuelCooldown);
-            MyAPIGateway.TerminalControls.CustomControlGetter += OnCustomControlGetter;
             block.Enabled = false;
             block.EnabledChanged += OnEnabledChanged;
             block.AppendingCustomInfo += OnAppendCustomInfo;
@@ -282,47 +280,18 @@ namespace TSUT.U235
             }
         }
 
-        private void OnCustomControlGetter(IMyTerminalBlock topBlock, List<IMyTerminalControl> controls)
+        public bool AutoRestartOn
         {
-            if (topBlock != _reactor || _switchSubscribed)
-                return;
-
-            foreach (var control in controls)
+            get { return _autoRestartOn; }
+            set
             {
-                if (control.Id == "OnOff")
-                {
-                    var onOffControl = control as IMyTerminalControlOnOffSwitch;
-                    if (onOffControl == null)
-                        continue;
-
-                    var originalGetter = onOffControl.Getter;
-                    var originalSetter = onOffControl.Setter;
-                    onOffControl.OnText = MyStringId.GetOrCompute("Auto");
-                    onOffControl.OffText = MyStringId.GetOrCompute("Manual");
-
-                    onOffControl.Getter = (block) =>
-                    {
-                        if (block == _reactor)
-                        {
-                            MyLog.Default.WriteLine($"[HMS.U235] OnOff Getter called for reactor, returning _autoRestartOn={_autoRestartOn}");
-                            return _autoRestartOn;
-                        }
-                        return originalGetter(block);
-                    };
-                    onOffControl.Setter = (block, value) =>
-                    {
-                        if (block != _reactor) { originalSetter(block, value); return; }
-                        _autoRestartOn = value;
-                        Storage.SetBool(_reactor, Config.BlockStateKey, value);
-                    };
-                    _switchSubscribed = true;
-                }
+                _autoRestartOn = value;
+                Storage.SetBool(_reactor, Config.BlockStateKey, value);
             }
         }
 
         public override void Cleanup()
         {
-            MyAPIGateway.TerminalControls.CustomControlGetter -= OnCustomControlGetter;
             _reactor.EnabledChanged -= OnEnabledChanged;
             _reactor.AppendingCustomInfo -= OnAppendCustomInfo;
         }
