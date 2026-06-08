@@ -29,6 +29,7 @@ namespace TSUT.HeatManagement
         public float BURN_TIME = 1800; // Baseline for burning time (s)
         public float INTERNAL_WASTE = 0.05f; // 5% of energy used to clear fuel waste
         public float HEAT_WASTE = 0.3f; // 30% of energy wasted as heat
+        public float MELTDOWN_GRIND_TEMP_THRESHOLD = 200f; // Min core temp (°C) to trigger meltdown when grinding
         private static Config _instance;
         private const string CONFIG_FILE = "TSUT_U235_Config.xml";
 

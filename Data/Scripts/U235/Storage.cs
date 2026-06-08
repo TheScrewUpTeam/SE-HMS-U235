@@ -1,7 +1,6 @@
 using System;
 using Sandbox.Game.EntityComponents;
 using VRage.Game.ModAPI;
-using VRage.Utils;
 
 namespace TSUT.U235
 {
@@ -25,14 +24,11 @@ namespace TSUT.U235
         public static float GetFloat(IMyCubeBlock block, Guid key, float @default = 0f)
         {
             if (block.Storage == null)
-            {
-                MyLog.Default.WriteLine($"[HMS.U235] Storage.GetFloat[{key}]: No storage on {block.DisplayNameText}");
                 SetFloat(block, key, @default);
-            }
+
             string valueStr;
             if (block.Storage.TryGetValue(key, out valueStr))
             {
-                MyLog.Default.WriteLine($"[HMS.U235] Storage.GetFloat[{key}]: Got value {valueStr} for {block.DisplayNameText}");
                 float value;
                 if (float.TryParse(valueStr, out value) && !float.IsNaN(value) && !float.IsInfinity(value))
                     return value;
@@ -55,14 +51,11 @@ namespace TSUT.U235
         public static bool GetBool(IMyCubeBlock block, Guid key, bool @default = false)
         {
             if (block.Storage == null)
-            {
-                MyLog.Default.WriteLine($"[HMS.U235] Storage.GetBool[{key}]: No storage on {block.DisplayNameText}");
                 SetBool(block, key, @default);
-            }
+
             string valueStr;
             if (block.Storage.TryGetValue(key, out valueStr))
             {
-                MyLog.Default.WriteLine($"[HMS.U235] Storage.GetBool[{key}]: Got value {valueStr} for {block.DisplayNameText}");
                 bool value;
                 if (bool.TryParse(valueStr, out value))
                     return value;
