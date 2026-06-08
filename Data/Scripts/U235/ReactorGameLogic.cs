@@ -169,6 +169,7 @@ namespace TSUT.U235
             // Mod manages fuel externally — vanilla capacity tracking would clamp MaxOutput to 0 after inventory is emptied
             _source.SetRemainingCapacityByType(MyResourceDistributorComponent.ElectricityId, float.PositiveInfinity);
             _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, 0f);
+            MyLog.Default.WriteLine($"[HMS.U235] Source found: {_source}, Enabled: {_source.Enabled}, MaxOutput: {_source.MaxOutput}, RemainingCapacity: {_source.RemainingCapacity}");
         }
 
         private void ComputeFuelPlan(IMyReactor block, out float batchFuelAmouont, out float batchBurningTime)
@@ -397,11 +398,13 @@ namespace TSUT.U235
         private void SetOutputPower(float outputMW)
         {
             if (_source == null) return;
+            MyLog.Default.WriteLine($"[HMS.U235] SetOutputPower: {outputMW} MW, Source.Enabled: {_source.Enabled}, RemainingCapacity: {_source.RemainingCapacity}");
             _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, outputMW);
             var distributor = _reactor.CubeGrid.ResourceDistributor as MyResourceDistributorComponent;
             distributor?.MarkForUpdate();
             _reactor.SetDetailedInfoDirty();
             _reactor.RefreshCustomInfo();
+            MyLog.Default.WriteLine($"[HMS.U235] SetOutputPower done: MaxOutput now {_source.MaxOutput} MW");
         }
 
         private float HeatUpCycle(float deltaTime, bool process)
