@@ -93,7 +93,7 @@ namespace TSUT.U235
         {
             get
             {
-                return State == ReactorState.Running;
+                return State == ReactorState.Running || State == ReactorState.HeatingUp;
             }
         }
 
@@ -106,6 +106,8 @@ namespace TSUT.U235
         {
             _autoRestartOn = false;
             Storage.SetBool(_reactor, Config.BlockStateKey, false);
+            if (State == ReactorState.HeatingUp)
+                _inventory.AddItems((MyFixedPoint)_batchFuelAmouont, new MyObjectBuilder_Ingot { SubtypeName = "Uranium" });
             State = ReactorState.CoolingDown;
         }
 
