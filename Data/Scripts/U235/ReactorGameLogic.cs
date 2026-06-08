@@ -15,7 +15,9 @@ using VRage.Game.Components;
 using VRage.Game.ModAPI;
 using VRage.ModAPI;
 using VRage.ObjectBuilders;
+using VRage.Game.Entity;
 using VRage.Utils;
+using VRageMath;
 using IngameInventoryItem = VRage.Game.ModAPI.Ingame.MyInventoryItem;
 using IngameItemType = VRage.Game.ModAPI.Ingame.MyItemType;
 
@@ -72,6 +74,7 @@ namespace TSUT.U235
                 _state = value;
                 Storage.SetFloat(_reactor, Config.ReactorState, (float)value);
                 MyLog.Default.WriteLine($"[HMS.U235] [{_reactor?.DisplayNameText}] State → {value}");
+                UpdateEmissiveState();
             }
         }
 
@@ -347,6 +350,7 @@ namespace TSUT.U235
         public void ReactOnNewHeat(float heat)
         {
             _api?.Effects.UpdateBlockHeatLight(_reactor, heat);
+            UpdateEmissiveState();
             _reactor?.SetDetailedInfoDirty();
             _reactor?.RefreshCustomInfo();
         }
@@ -556,6 +560,24 @@ namespace TSUT.U235
                 }
             }
             return false;
+        }
+
+        private void UpdateEmissiveState()
+        {
+            var block = _reactor as MyCubeBlock;
+            if (block?.Render?.RenderObjectIDs == null || block.Render.RenderObjectIDs.Length == 0) return;
+            uint renderObjectId = block.Render.RenderObjectIDs[0];
+            Color color;
+            float emissivity;
+            switch (_state)
+            {
+                case ReactorState.Idle:        color = Color.White;            emissivity = 0.5f; break;
+                case ReactorState.HeatingUp:   color = new Color(255, 140, 0); emissivity = 0.8f; break;
+                case ReactorState.Running:     color = Color.Green;            emissivity = 1.0f; break;
+                case ReactorState.CoolingDown: color = Color.Cyan;             emissivity = 0.7f; break;
+                default: return;
+            }
+            block.UpdateEmissiveParts(renderObjectId, emissivity, color, color);
         }
 
         private string FormatEnergyPerSecond(double value)
