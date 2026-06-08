@@ -82,7 +82,7 @@ namespace TSUT.U235
         {
             get
             {
-                return State == ReactorState.Idle && HasFuel() && IsTemperatureLaunchReady();
+                return State == ReactorState.Idle && HasFuelInInventory() && IsTemperatureLaunchReady();
             }
         }
 
@@ -132,24 +132,6 @@ namespace TSUT.U235
             _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, 0f);
             MyLog.Default.WriteLine($"[HMS.U235] Source found: {_source}, Enabled: {_source.Enabled}, MaxOutput: {_source.MaxOutput}, RemainingCapacity: {_source.RemainingCapacity}");
         }
-
-        // private void InitiateSource()
-        // {
-        //     _source = new MyResourceSourceComponent();
-        //     var sourceInfo = new MyResourceSourceInfo
-        //     {
-        //         ResourceTypeId = MyResourceDistributorComponent.ElectricityId,
-        //         DefinedOutput = 0f,
-        //         ProductionToCapacityMultiplier = 1f,
-        //     };
-        //     _source.Init(MyStringHash.GetOrCompute("Reactor"), sourceInfo);
-        //     _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, GetOptimalPowerOutput(1));
-        //     MyLog.Default.WriteLine($"[HMS.U235] Source created: {_source}");
-        //     var distributor = _reactor.CubeGrid.ResourceDistributor as MyResourceDistributorComponent;
-        //     distributor?.AddSource(_source);
-        //     distributor.MarkForUpdate();
-        //     MyLog.Default.WriteLine($"[HMS.U235] Source added to distributor: {_source}");
-        // }
 
         private void ComputeFuelPlan(IMyReactor block, out float batchFuelAmouont, out float batchBurningTime)
         {
@@ -559,7 +541,7 @@ namespace TSUT.U235
             switch (State)
             {
                 case ReactorState.Idle:
-                    if (!HasFuel())
+                    if (!HasFuelInInventory())
                     {
                         _lastLaunchFailReason = $"Reactor has not enough fuel, required {_batchFuelAmouont}kg of Uranium to launch";
                     }
@@ -577,17 +559,17 @@ namespace TSUT.U235
 
         private bool TryStartSequence()
         {
-            if (!HasFuel())
-            {
-                return false;
-            }
             if (!IsTemperatureLaunchReady())
-            {
                 return false;
-            }
+
+            if (!HasFuelInInventory() && (!_autoRestartOn || !TryPullFuel()))
+                return false;
+
             MyFixedPoint amount = (MyFixedPoint)_batchFuelAmouont;
             var uraniumId = new MyDefinitionId(typeof(MyObjectBuilder_Ingot), "Uranium");
             var fuel = _inventory.FindItem(uraniumId);
+            if (fuel == null)
+                return false;
             _inventory.RemoveItemAmount(fuel, amount);
             _source.SetRemainingCapacityByType(MyResourceDistributorComponent.ElectricityId, float.PositiveInfinity);
             State = ReactorState.HeatingUp;
@@ -601,16 +583,11 @@ namespace TSUT.U235
             return CoreTemp >= Config.Instance.REACTOR_MINIMAL_LAUNCH_TEMPERATURE;
         }
 
-        private bool HasFuel()
+        private bool HasFuelInInventory()
         {
             MyFixedPoint amount = (MyFixedPoint)_batchFuelAmouont;
             var uraniumId = new MyDefinitionId(typeof(MyObjectBuilder_Ingot), "Uranium");
-            var fuel = _inventory.GetItemAmount(uraniumId);
-            if (fuel >= amount)
-            {
-                return true;
-            }
-            return _autoRestartOn && TryPullFuel();
+            return _inventory.GetItemAmount(uraniumId) >= amount;
         }
 
         private bool TryPullFuel()
@@ -623,8 +600,7 @@ namespace TSUT.U235
                 var fuel = container.GetInventory().FindItem(uraniumId);
                 if (fuel == null || fuel.Amount < amount)
                     continue;
-                _inventory.TransferItemFrom(container.GetInventory(), fuel, amount);
-                return true;
+                return _inventory.TransferItemFrom(container.GetInventory(), fuel, amount);
             }
             return false;
         }
