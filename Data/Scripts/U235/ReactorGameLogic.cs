@@ -50,6 +50,7 @@ namespace TSUT.U235
         private float _burningCycleCountDown;
         private float _lastTempChange;
         private float _pullCooldown = 0f;
+        private float _controlRodThreshold;
         private bool _meltdownTriggered = false;
         private float _blinkTimer = 0f;
         private bool _smokeActive = false;
@@ -60,6 +61,7 @@ namespace TSUT.U235
         const float FUEL_REFERENCE = 0.08f;
         const float VOLUME_REFERENCE = 0.125f;
         const float LONGATION_REFERENCE = 2240;
+        const float CONDUCTANCE_SIZE_EXPONENT = 0.22f;
 
         private float FuelCountdown
         {
@@ -106,6 +108,16 @@ namespace TSUT.U235
             }
         }
 
+        public float ControlRodThreshold
+        {
+            get { return _controlRodThreshold; }
+            set
+            {
+                _controlRodThreshold = value;
+                Storage.SetFloat(_reactor, Config.ControlRodThresholdKey, value);
+            }
+        }
+
         public void ManualLaunch() => TryStartSequence();
 
         public void ManualStop()
@@ -127,6 +139,7 @@ namespace TSUT.U235
             _burningCycleCountDown = Storage.GetFloat(_reactor, Config.FuelCooldown);
             _coreTemp = Storage.GetFloat(_reactor, Config.CoreTempKey, 0f);
             _autoRestartOn = Storage.GetBool(_reactor, Config.BlockStateKey, false);
+            _controlRodThreshold = Storage.GetFloat(_reactor, Config.ControlRodThresholdKey, Config.Instance.CONTROL_ROD_THRESHOLD_DEFAULT);
 
             _reactor.Enabled = false;
             _reactor.EnabledChanged += OnEnabledChanged;
@@ -278,6 +291,8 @@ namespace TSUT.U235
             builder.AppendLine($"Core Heat Change: {GetCurrentHeatChange(1f) / _coreTermalCapacity:F2} °C/s");
             TimeSpan timeSpan = TimeSpan.FromSeconds(FuelCountdown);
             builder.AppendLine($"Fuel TTL: {timeSpan:hh\\:mm\\:ss}");
+            float reactionRate = (1f - GetControlRodFraction()) * (CoreTemp / Config.Instance.REACTOR_WORKING_TEMPERATURE) * 100f;
+            builder.AppendLine($"Reaction Rate: {reactionRate:F0}%");
         }
 
         private void AddHeatingUpInfo(StringBuilder builder)
@@ -478,12 +493,27 @@ namespace TSUT.U235
             return change != 0 ? change : 0.00001f;
         }
 
+        private float GetSizeHeatMultiplier()
+        {
+            return (float)Math.Pow(FUEL_REFERENCE / _batchFuelAmouont, Config.Instance.HEAT_SCALE_EXPONENT);
+        }
+
+        private float GetControlRodFraction()
+        {
+            if (_controlRodThreshold >= Config.Instance.REACTOR_MELTDOWN_TEMPERATURE)
+                return 0f;
+            float range = Config.Instance.REACTOR_MELTDOWN_TEMPERATURE - _controlRodThreshold;
+            float fraction = (CoreTemp - _controlRodThreshold) / range;
+            return Math.Max(0f, Math.Min(Config.Instance.MAX_ROD_FRACTION, fraction));
+        }
+
         private float getInternalExchangeEnergy(float deltaTime)
         {
             var extTemp = _api.Utils.GetHeat(_reactor);
-            float conductivity = _api.Utils.GetHmsConfig().HEATPIPE_CONDUCTIVITY * Config.Instance.CORE_TO_BLOCK_CONDUCTANCE_MODIFIER;
+            float sizeScale = (float)Math.Pow(_batchFuelAmouont / FUEL_REFERENCE, CONDUCTANCE_SIZE_EXPONENT);
+            float conductivity = _api.Utils.GetHmsConfig().HEATPIPE_CONDUCTIVITY * Config.Instance.CORE_TO_BLOCK_CONDUCTANCE_MODIFIER * sizeScale;
             float tempDiff = CoreTemp - extTemp;
-            float energyTransferred = ApplyExchangeLimit(tempDiff * conductivity * deltaTime, _coreTermalCapacity, _blockTermalCapacity, tempDiff);
+            float energyTransferred = ApplyExchangeLimit(tempDiff * conductivity * deltaTime, _coreTermalCapacity, _coreTermalCapacity, tempDiff);
             return energyTransferred;
         }
 
@@ -507,7 +537,7 @@ namespace TSUT.U235
         {
             float totalCleanEnergy = GetCleanEnergy();
             float energyPerSecond = totalCleanEnergy / _batchBurningTime;
-            return energyPerSecond * deltaTime;
+            return energyPerSecond * (1f - GetControlRodFraction()) * deltaTime;
         }
 
         private float GetCurrentHeatChange(float deltaTime)
@@ -516,7 +546,7 @@ namespace TSUT.U235
             float extractedEnergy = totalBatchEnergy * Config.Instance.BURN_ENFFICIENCY;
             float totalHeat = extractedEnergy * Config.Instance.HEAT_WASTE;
             float heatPerSec = totalHeat / _batchBurningTime;
-            return heatPerSec * deltaTime;
+            return heatPerSec * GetSizeHeatMultiplier() * (1f - GetControlRodFraction()) * deltaTime;
         }
 
         private float GetCleanEnergy()

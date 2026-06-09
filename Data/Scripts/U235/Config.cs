@@ -12,6 +12,7 @@ namespace TSUT.HeatManagement
         public static readonly Guid BlockStateKey = new Guid("decafbad-0000-4c00-babe-c0ffee000012");
         public static readonly Guid FuelCooldown = new Guid("decafbad-0000-4c00-babe-c0ffee000013");
         public static readonly Guid ReactorState = new Guid("decafbad-0000-4c00-babe-c0ffee000014");
+        public static readonly Guid ControlRodThresholdKey = new Guid("decafbad-0000-4c00-babe-c0ffee000015");
 
         public string SYSTEM_VERSION = "1.0.2";
         public bool SYSTEM_AUTO_UPDATE = true;
@@ -30,6 +31,9 @@ namespace TSUT.HeatManagement
         public float INTERNAL_WASTE = 0.05f; // 5% of energy used to clear fuel waste
         public float HEAT_WASTE = 0.67f; // 67% of energy wasted as heat (real reactor thermal efficiency ~33%)
         public float MELTDOWN_GRIND_TEMP_THRESHOLD = 200f; // Min core temp (°C) to trigger meltdown when grinding
+        public float HEAT_SCALE_EXPONENT = 0.185f;
+        public float CONTROL_ROD_THRESHOLD_DEFAULT = 900f;
+        public float MAX_ROD_FRACTION = 0.80f;
         private static Config _instance;
         private const string CONFIG_FILE = "TSUT_U235_Config.xml";
 
