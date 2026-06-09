@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using Sandbox.Engine.Multiplayer;
 using Sandbox.Game.Entities;
 using Sandbox.ModAPI;
 using SpaceEngineers.Game.ModAPI;
@@ -201,12 +202,30 @@ namespace TSUT.HeatManagement
             float GetExchangeUniversal(IMyCubeBlock block, IMyCubeBlock neighborBlock, float deltaTime);
 
             /// <summary>
+            /// Consumes requested amount O2 using internal O2 Distribution System.
+            /// Returns the O2 amount that is not covered b production/storage.
+            /// </summary>
+            float ConsumeO2(float amount, float deltaTime, IMyCubeBlock block);
+
+            /// <summary>
+            /// Estimates is there enough O2 in internal Disstribution System.
+            /// Do not consumes anything.
+            /// </summary>
+            bool HasEnoughO2(float amount, float deltaTime, IMyCubeBlock block);
+
+            /// <summary>
             /// Retrieves the current heat management system configuration.
             /// Contains all the configurable parameters that control the behavior of the heat system,
             /// such as cooling rates, conductivity values, and various behavioral flags.
             /// </summary>
             /// <returns>The current heat management system configuration.</returns>
             HmsConfig GetHmsConfig();
+
+            /// <summary>
+            /// Clamps an energy exchange value so it cannot exceed what the temperature difference allows.
+            /// Prevents over-exchange that would cause unrealistic temperature swings within a single tick.
+            /// </summary>
+            float ApplyExchangeLimit(float energyDelta, float capA, float capB, float tempDiff);
         }
 
         public struct HeatNetworkData
@@ -517,12 +536,12 @@ namespace TSUT.HeatManagement
                     {
                         neighborNetworks.Add(neighborFat, transfer / capacity);
                         neighborNetworkData.Add(neighborFat, (HeatNetworkData)netwrorkData);
-                        networkCumulative = -transfer / ownCapacity;
+                        networkCumulative += -transfer / ownCapacity;
                     }
                     else
                     {
                         neighborBlocks.Add(neighborFat, transfer / capacity);
-                        neighborCumulative = -transfer / ownCapacity;
+                        neighborCumulative += -transfer / ownCapacity;
                     }
                     energyTransferred -= transfer;
                 }
@@ -887,6 +906,39 @@ namespace TSUT.HeatManagement
                     return fn(block?.EntityId ?? 0, neighborBlock?.EntityId ?? 0, deltaTime);
                 }
                 return 0f;
+            }
+
+            public float ConsumeO2(float amount, float deltaTime, IMyCubeBlock block)
+            {
+                object method;
+                if (client.TryGetValue("ConsumeO2", out method) && method is Func<float, float, long, float>)
+                {
+                    var fn = (Func<float, float, long, float>)method;
+                    return fn(amount, deltaTime, block?.EntityId ?? 0);
+                }
+                return amount;
+            }
+
+            public bool HasEnoughO2(float amount, float deltaTime, IMyCubeBlock block)
+            {
+                object method;
+                if (client.TryGetValue("HasEnoughO2", out method) && method is Func<float, float, long, bool>)
+                {
+                    var fn = (Func<float, float, long, bool>)method;
+                    return fn(amount, deltaTime, block?.EntityId ?? 0);
+                }
+                return false;
+            }
+
+            public float ApplyExchangeLimit(float energyDelta, float capA, float capB, float tempDiff)
+            {
+                object method;
+                if (client.TryGetValue("ApplyExchangeLimit", out method) && method is Func<float, float, float, float, float>)
+                {
+                    var fn = (Func<float, float, float, float, float>)method;
+                    return fn(energyDelta, capA, capB, tempDiff);
+                }
+                return energyDelta;
             }
 
             public HmsConfig GetHmsConfig()
