@@ -32,14 +32,14 @@ namespace TSUT.U235
     }
 
     [MyEntityComponentDescriptor(typeof(MyObjectBuilder_Reactor), false)]
-    public class ReactorGameLogic : MyGameLogicComponent
+    public class ReactorGameLogic : HmsApi.AHmsBlockComponent
     {
         IMyReactor _reactor;
-        HmsApi _api;
-        ReactorAdapter _adapter;
+        IMyCubeGrid _subscribedGrid;
         IMyInventory _inventory;
         private IMyInventory Inventory => _inventory ?? (_inventory = _reactor?.GetInventory(0));
 
+        private bool _apiInitialized = false;
         private bool _autoRestartOn = false;
         private float _batchFuelAmouont = 1f;
         private float _batchBurningTime;
@@ -131,6 +131,8 @@ namespace TSUT.U235
 
         public override void Init(MyObjectBuilder_EntityBase objectBuilder)
         {
+            base.Init(objectBuilder);
+
             _reactor = Entity as IMyReactor;
             if (_reactor == null) return;
 
@@ -144,21 +146,20 @@ namespace TSUT.U235
             _reactor.Enabled = false;
             _reactor.EnabledChanged += OnEnabledChanged;
             _reactor.AppendingCustomInfo += OnAppendCustomInfo;
-            _reactor.CubeGrid.OnBlockIntegrityChanged += OnBlockIntegrityChanged;
-            _reactor.CubeGrid.OnGridBlockDamaged += OnGridBlockDamaged;
 
             ComputeFuelPlan(_reactor, out _batchFuelAmouont, out _batchBurningTime);
             _coreTermalCapacity = GetCoreThermalCapacity();
 
             InitiateSource();
-
-            NeedsUpdate |= MyEntityUpdateEnum.BEFORE_NEXT_FRAME;
         }
 
         public override void UpdateOnceBeforeFrame()
         {
+            base.UpdateOnceBeforeFrame();
             ReactorTerminalControls.Register();
         }
+
+        public override void OnHeatCleanup() { }
 
         public override void Close()
         {
@@ -166,25 +167,51 @@ namespace TSUT.U235
             {
                 _reactor.EnabledChanged -= OnEnabledChanged;
                 _reactor.AppendingCustomInfo -= OnAppendCustomInfo;
-                _reactor.CubeGrid.OnBlockIntegrityChanged -= OnBlockIntegrityChanged;
-                _reactor.CubeGrid.OnGridBlockDamaged -= OnGridBlockDamaged;
             }
-            _reactor = null;
-            _api = null;
-            _adapter = null;
+            base.Close();
         }
 
-        public void SetApi(HmsApi api, ReactorAdapter adapter)
+        public override void OnAddedToScene()
         {
-            _api = api;
-            _adapter = adapter;
-            _blockTermalCapacity = api.Utils.GetThermalCapacity(_reactor);
+            base.OnAddedToScene();
+            if (_reactor == null) return;
+            _reactor.AppendingCustomInfo -= OnAppendCustomInfo;
+            _reactor.AppendingCustomInfo += OnAppendCustomInfo;
+            if (_subscribedGrid != null)
+            {
+                _subscribedGrid.OnBlockIntegrityChanged -= OnBlockIntegrityChanged;
+                _subscribedGrid.OnGridBlockDamaged -= OnGridBlockDamaged;
+            }
+            _subscribedGrid = _reactor.CubeGrid;
+            if (_subscribedGrid != null)
+            {
+                _subscribedGrid.OnBlockIntegrityChanged += OnBlockIntegrityChanged;
+                _subscribedGrid.OnGridBlockDamaged += OnGridBlockDamaged;
+            }
+        }
+
+        public override void OnRemovedFromScene()
+        {
+            if (_subscribedGrid != null)
+            {
+                _subscribedGrid.OnBlockIntegrityChanged -= OnBlockIntegrityChanged;
+                _subscribedGrid.OnGridBlockDamaged -= OnGridBlockDamaged;
+                _subscribedGrid = null;
+            }
+            base.OnRemovedFromScene();
+        }
+
+        private void EnsureApiInitialized()
+        {
+            if (_apiInitialized || Api?.Utils == null || _reactor == null) return;
+            _apiInitialized = true;
+            _blockTermalCapacity = Api.Utils.GetThermalCapacity(_reactor);
             _coreTermalCapacity = GetCoreThermalCapacity();
-            float blockHeat = api.Utils.GetHeat(_reactor);
+            float blockHeat = Api.Utils.GetHeat(_reactor);
             if (_coreTemp == 0f)
                 _coreTemp = blockHeat;
             else if (blockHeat == 0f)
-                api.Utils.SetHeat(_reactor, _coreTemp, silent: true);
+                Api.Utils.SetHeat(_reactor, _coreTemp, silent: true);
         }
 
         private void InitiateSource()
@@ -216,17 +243,17 @@ namespace TSUT.U235
 
         private void OnAppendCustomInfo(IMyTerminalBlock block, StringBuilder builder)
         {
-            if (_api == null) return;
+            if (Api?.Utils == null) return;
 
-            float currentHeat = _api.Utils.GetHeat(_reactor);
+            float currentHeat = Api.Utils.GetHeat(_reactor);
             float internalUse = _lastTempChange;
             float neighborExchange;
             float networkExchange;
 
             var neighborInfo = new StringBuilder();
-            _adapter.AppendNeighborInfo(neighborInfo, out neighborExchange, out networkExchange);
+            AddNeighborAndNetworksInfo(neighborInfo, out neighborExchange, out networkExchange);
 
-            float ambientExchange = _api.Utils.GetAmbientHeatLoss(block, 1);
+            float ambientExchange = Api.Utils.GetAmbientHeatLoss(block, 1);
             float heatChange = internalUse - ambientExchange + neighborExchange + networkExchange;
 
             builder.AppendLine("--- HMS.U235 ---");
@@ -328,14 +355,17 @@ namespace TSUT.U235
                 _reactor.Enabled = false;
         }
 
-        public float GetHeatChange(float deltaTime)
+        public override float GetHeatChange(float deltaTime)
         {
-            if (_api == null) return 0f;
+            EnsureApiInitialized();
+            if (Api?.Utils == null) return 0f;
             EstimateErrors();
             var @internal = GetTempChange(deltaTime);
-            var ambientExchange = _api.Utils.GetAmbientHeatLoss(_reactor, deltaTime);
+            var ambientExchange = Api.Utils.GetAmbientHeatLoss(_reactor, deltaTime);
             return @internal - ambientExchange;
         }
+
+        public override void SpreadHeat(float deltaTime) => SpreadHeatStandard(deltaTime);
 
         public float GetTempChange(float deltaTime, bool process = true)
         {
@@ -379,9 +409,9 @@ namespace TSUT.U235
             return change;
         }
 
-        public void ReactOnNewHeat(float heat)
+        public override void ReactOnNewHeat(float heat)
         {
-            _api?.Effects.UpdateBlockHeatLight(_reactor, heat);
+            Api?.Effects.UpdateBlockHeatLight(_reactor, heat);
             bool shouldBlink = State == ReactorState.Running && CoreTemp > Config.Instance.REACTOR_WORKING_TEMPERATURE && !_meltdownTriggered;
             SetBlinkFrameUpdate(shouldBlink);
             if (!shouldBlink)
@@ -470,7 +500,7 @@ namespace TSUT.U235
                 return 0f;
             }
             float change = 0;
-            var extTemp = _api.Utils.GetHeat(_reactor);
+            var extTemp = Api.Utils.GetHeat(_reactor);
             if (extTemp > CoreTemp)
             {
                 float energyTransferred = getInternalExchangeEnergy(deltaTime);
@@ -509,9 +539,9 @@ namespace TSUT.U235
 
         private float getInternalExchangeEnergy(float deltaTime)
         {
-            var extTemp = _api.Utils.GetHeat(_reactor);
+            var extTemp = Api.Utils.GetHeat(_reactor);
             float sizeScale = (float)Math.Pow(_batchFuelAmouont / FUEL_REFERENCE, CONDUCTANCE_SIZE_EXPONENT);
-            float conductivity = _api.Utils.GetHmsConfig().HEATPIPE_CONDUCTIVITY * Config.Instance.CORE_TO_BLOCK_CONDUCTANCE_MODIFIER * sizeScale;
+            float conductivity = Api.Utils.GetHmsConfig().HEATPIPE_CONDUCTIVITY * Config.Instance.CORE_TO_BLOCK_CONDUCTANCE_MODIFIER * sizeScale;
             float tempDiff = CoreTemp - extTemp;
             float energyTransferred = ApplyExchangeLimit(tempDiff * conductivity * deltaTime, _coreTermalCapacity, _coreTermalCapacity, tempDiff);
             return energyTransferred;
@@ -676,16 +706,16 @@ namespace TSUT.U235
 
         private void UpdateSmokeEffect()
         {
-            if (_api == null) return;
+            if (Api?.Utils == null) return;
             bool shouldSmoke = !_meltdownTriggered && CoreTemp >= Config.Instance.REACTOR_MELTDOWN_TEMPERATURE - 200;
             if (shouldSmoke && !_smokeActive)
             {
-                _api.Effects.InstantiateSmoke(_reactor);
+                Api.Effects.InstantiateSmoke(_reactor);
                 _smokeActive = true;
             }
             else if (!shouldSmoke && _smokeActive)
             {
-                _api.Effects.RemoveSmoke(_reactor);
+                Api.Effects.RemoveSmoke(_reactor);
                 _smokeActive = false;
             }
         }
