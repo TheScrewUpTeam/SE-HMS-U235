@@ -608,7 +608,7 @@ namespace TSUT.HeatManagement
         ///   {
         ///       public override float GetHeatChange(float dt) => 10f * dt;
         ///       public override void SpreadHeat(float dt) => SpreadHeatStandard(dt);
-        ///       public override void OnHeatCleanup() { }
+        ///       public override void OnDetachedFromHeatSystem() { }
         ///       public override void ReactOnNewHeat(float heat) { }
         ///   }
         /// </summary>
@@ -675,7 +675,7 @@ namespace TSUT.HeatManagement
                             { "GetHeatChange", new Func<float, float>(GetHeatChange) },
                             { "ReactOnNewHeat", new Action<float>(ReactOnNewHeat) },
                             { "SpreadHeat", new Action<float>(SpreadHeat) },
-                            { "Cleanup", new Action(OnHeatCleanup) }
+                            { "Cleanup", new Action(OnDetachedFromHeatSystem) }
                         }
                     }
                 });
@@ -825,7 +825,7 @@ namespace TSUT.HeatManagement
             public override void Close()
             {
                 _pendingRegistration.Remove(this);
-                OnHeatCleanup();
+                OnDetachedFromHeatSystem();
                 base.Close();
             }
 
@@ -835,8 +835,12 @@ namespace TSUT.HeatManagement
             /// <summary>Called every tick to exchange heat with neighbors. Call SpreadHeatStandard(deltaTime) for default behavior.</summary>
             public abstract void SpreadHeat(float deltaTime);
 
-            /// <summary>Called when the block is removed or the grid unloads. Clean up event handlers here.</summary>
-            public abstract void OnHeatCleanup();
+            /// <summary>
+            /// Called by HMS when this block leaves the heat system (grid destroyed, merge, unload).
+            /// Use for HMS-specific cleanup only — do NOT unsubscribe SE events here.
+            /// Unsubscribe SE events in Close() instead.
+            /// </summary>
+            public abstract void OnDetachedFromHeatSystem();
 
             /// <summary>Called after the block's heat value changes.</summary>
             public abstract void ReactOnNewHeat(float heat);

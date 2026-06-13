@@ -159,7 +159,7 @@ namespace TSUT.U235
             ReactorTerminalControls.Register();
         }
 
-        public override void OnHeatCleanup() { }
+        public override void OnDetachedFromHeatSystem() { }
 
         public override void Close()
         {
