@@ -47,6 +47,8 @@ namespace TSUT.U235
         private string _lastLaunchFailReason = "";
         private float _blockTermalCapacity;
         private float _coreTermalCapacity;
+        private float _defMaxMW;
+        private float _theoreticalMaxMW;
         private float _burningCycleCountDown;
         private float _lastTempChange;
         private float _pullCooldown = 0f;
@@ -150,12 +152,16 @@ namespace TSUT.U235
             ComputeFuelPlan(_reactor, out _batchFuelAmouont, out _batchBurningTime);
             _coreTermalCapacity = GetCoreThermalCapacity();
 
+            _theoreticalMaxMW = (GetCleanEnergy() / _batchBurningTime) / 1000000f;
+            _defMaxMW = (_reactor as MyReactor)?.BlockDefinition?.MaxPowerOutput ?? 1f;
+            if (_defMaxMW > 0f)
+                _reactor.PowerOutputMultiplier = _theoreticalMaxMW / _defMaxMW;
+
             InitiateSource();
         }
 
-        public override void UpdateOnceBeforeFrame()
+        protected override void OnHmsInit()
         {
-            base.UpdateOnceBeforeFrame();
             ReactorTerminalControls.Register();
         }
 
@@ -485,6 +491,14 @@ namespace TSUT.U235
         private void SetOutputPower(float outputMW)
         {
             if (_source == null) return;
+            // vanilla OnCapacityChanged/OnEnabledChanged reset these; re-assert or distributor ignores the source
+            if (outputMW > 0f)
+            {
+                _source.Enabled = true;
+                _source.SetRemainingCapacityByType(MyResourceDistributorComponent.ElectricityId, float.PositiveInfinity);
+            }
+            if (_defMaxMW > 0f)
+                _reactor.PowerOutputMultiplier = (outputMW > 0f ? outputMW : _theoreticalMaxMW) / _defMaxMW;
             _source.SetMaxOutputByType(MyResourceDistributorComponent.ElectricityId, outputMW);
             var distributor = _reactor.CubeGrid.ResourceDistributor as MyResourceDistributorComponent;
             distributor?.MarkForUpdate();
@@ -532,9 +546,12 @@ namespace TSUT.U235
         {
             if (_controlRodThreshold >= Config.Instance.REACTOR_MELTDOWN_TEMPERATURE)
                 return 0f;
-            float range = Config.Instance.REACTOR_MELTDOWN_TEMPERATURE - _controlRodThreshold;
-            float fraction = (CoreTemp - _controlRodThreshold) / range;
-            return Math.Max(0f, Math.Min(Config.Instance.MAX_ROD_FRACTION, fraction));
+            float ceiling = Config.Instance.REACTOR_MELTDOWN_TEMPERATURE - 100f;
+            float range = ceiling - _controlRodThreshold;
+            if (range <= 0f)
+                return Config.Instance.MAX_ROD_FRACTION;
+            float t = Math.Max(0f, Math.Min(1f, (CoreTemp - _controlRodThreshold) / range));
+            return (float)Math.Pow(t, 0.5f) * Config.Instance.MAX_ROD_FRACTION;
         }
 
         private float getInternalExchangeEnergy(float deltaTime)
@@ -734,64 +751,26 @@ namespace TSUT.U235
             if (!MyAPIGateway.Session.IsServer) return;
             MyLog.Default.WriteLine($"[HMS.U235] [{_reactor?.DisplayNameText}] MELTDOWN at {CoreTemp:F0}°C");
             UpdateEmissiveState();
-            var secondaryPositions = SpawnNeighborContainers();
-            MyVisualScriptLogicProvider.CreateExplosion(_reactor.GetPosition(), 10f, 1000000);
-            foreach (var pos in secondaryPositions)
-                MyVisualScriptLogicProvider.CreateExplosion(pos, 5f, 100000);
-        }
 
-        private List<Vector3D> SpawnNeighborContainers()
-        {
             var grid = _reactor.CubeGrid;
-            string containerSubtype = grid.GridSizeEnum == MyCubeSize.Large ? "LargeBlockSmallContainer" : "SmallBlockSmallContainer";
-            var spawnedPositions = new List<Vector3D>();
-            foreach (var pos in GetNeighborPositions(_reactor.SlimBlock.Min, _reactor.SlimBlock.Max))
-            {
-                var existing = grid.GetCubeBlock(pos);
-                if (existing != null)
-                    grid.RemoveBlock(existing, false);
-                if (!grid.CanAddCube(pos))
-                    continue;
-                var ob = new MyObjectBuilder_CargoContainer { SubtypeName = containerSubtype, Min = pos };
-                var slim = grid.AddBlock(ob, false);
-                if (slim?.FatBlock != null)
-                {
-                    var inventory = slim.FatBlock.GetInventory();
-                    if (inventory != null)
-                    {
-                        var ammoId = new MyDefinitionId(typeof(MyObjectBuilder_AmmoMagazine), "LargeCalibreAmmo");
-                        MyPhysicalItemDefinition itemDef;
-                        int count = 5;
-                        if (MyDefinitionManager.Static.TryGetPhysicalItemDefinition(ammoId, out itemDef) && itemDef.Volume > 0f)
-                            count = Math.Max(1, (int)((float)inventory.MaxVolume / itemDef.Volume));
-                        inventory.AddItems((MyFixedPoint)count, new MyObjectBuilder_AmmoMagazine { SubtypeName = "LargeCalibreAmmo" });
-                    }
-                    spawnedPositions.Add(grid.GridIntegerToWorld(pos));
-                }
-            }
-            return spawnedPositions;
-        }
+            var slim = _reactor.SlimBlock;
+            float gs = grid.GridSize;
+            float hx = (slim.Max.X - slim.Min.X + 1) * gs / 2f;
+            float hy = (slim.Max.Y - slim.Min.Y + 1) * gs / 2f;
+            float hz = (slim.Max.Z - slim.Min.Z + 1) * gs / 2f;
+            float circumRadius = (float)Math.Sqrt(hx * hx + hy * hy + hz * hz);
+            float primaryRadius = Math.Max(30f, circumRadius * 6f);
+            float faceRadius = Math.Max(16f, circumRadius * 3f);
 
-        private IEnumerable<Vector3I> GetNeighborPositions(Vector3I min, Vector3I max)
-        {
-            for (int y = min.Y; y <= max.Y; y++)
-                for (int z = min.Z; z <= max.Z; z++)
-                {
-                    yield return new Vector3I(min.X - 1, y, z);
-                    yield return new Vector3I(max.X + 1, y, z);
-                }
-            for (int x = min.X; x <= max.X; x++)
-                for (int z = min.Z; z <= max.Z; z++)
-                {
-                    yield return new Vector3I(x, min.Y - 1, z);
-                    yield return new Vector3I(x, max.Y + 1, z);
-                }
-            for (int x = min.X; x <= max.X; x++)
-                for (int y = min.Y; y <= max.Y; y++)
-                {
-                    yield return new Vector3I(x, y, min.Z - 1);
-                    yield return new Vector3I(x, y, max.Z + 1);
-                }
+            var center = _reactor.GetPosition();
+            var m = grid.WorldMatrix;
+            MyVisualScriptLogicProvider.CreateExplosion(center, primaryRadius, 5000000);
+            MyVisualScriptLogicProvider.CreateExplosion(center + m.Right   * hx, faceRadius, 2000000);
+            MyVisualScriptLogicProvider.CreateExplosion(center - m.Right   * hx, faceRadius, 2000000);
+            MyVisualScriptLogicProvider.CreateExplosion(center + m.Up      * hy, faceRadius, 2000000);
+            MyVisualScriptLogicProvider.CreateExplosion(center - m.Up      * hy, faceRadius, 2000000);
+            MyVisualScriptLogicProvider.CreateExplosion(center + m.Forward * hz, faceRadius, 2000000);
+            MyVisualScriptLogicProvider.CreateExplosion(center - m.Forward * hz, faceRadius, 2000000);
         }
 
         private string FormatEnergyPerSecond(double value)

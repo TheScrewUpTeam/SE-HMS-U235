@@ -643,7 +643,11 @@ namespace TSUT.HeatManagement
                 var pending = new List<AHmsBlockComponent>(_pendingRegistration);
                 _pendingRegistration.Clear();
                 foreach (var comp in pending)
+                {
+                    if (!comp.IsAllowedGrid()) continue;
+                    comp.OnHmsInit();
                     comp.RegisterWithHms();
+                }
             }
 
             public override void Init(MyObjectBuilder_EntityBase objectBuilder)
@@ -652,15 +656,36 @@ namespace TSUT.HeatManagement
                 NeedsUpdate |= MyEntityUpdateEnum.BEFORE_NEXT_FRAME;
             }
 
-            public override void UpdateOnceBeforeFrame()
+            public sealed override void UpdateOnceBeforeFrame()
             {
                 base.UpdateOnceBeforeFrame();
                 EnsureApi();
                 if (_sharedApi.Utils != null)
-                    RegisterWithHms();
+                {
+                    if (IsAllowedGrid())
+                    {
+                        OnHmsInit();
+                        RegisterWithHms();
+                    }
+                }
                 else
                     _pendingRegistration.Add(this);
             }
+
+            private bool IsAllowedGrid()
+            {
+                var cfg = _sharedApi?.Utils?.GetHmsConfig();
+                if (cfg == null || !cfg.LIMIT_TO_PLAYER_GRIDS) return true;
+                var blocks = new List<IMyTerminalBlock>();
+                MyAPIGateway.TerminalActionsHelper.GetTerminalSystemForGrid(Block.CubeGrid)?.GetBlocks(blocks);
+                return blocks.Exists(b => b.OwnerId != 0 && MyAPIGateway.Players.TryGetIdentityId(b.OwnerId) != null);
+            }
+
+            /// <summary>
+            /// Called once after HMS is ready and the grid passes ownership checks.
+            /// Register terminal controls and subscribe SE events here (not in UpdateOnceBeforeFrame).
+            /// </summary>
+            protected virtual void OnHmsInit() { }
 
             private void RegisterWithHms()
             {
