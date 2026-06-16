@@ -57,6 +57,9 @@ namespace TSUT.U235
         private float _blinkTimer = 0f;
         private bool _smokeActive = false;
         private bool _blinkFrameUpdateRegistered = false;
+        private bool _warnedPrimary = false;
+        private bool _warnedCritical = false;
+        private float _lastOutputMW = 0f;
         private MyResourceSourceComponent _source;
         private ReactorState _state;
 
@@ -83,6 +86,10 @@ namespace TSUT.U235
                 _state = value;
                 Storage.SetFloat(_reactor, Config.ReactorState, (float)value);
                 UpdateEmissiveState();
+                _warnedPrimary = false;
+                _warnedCritical = false;
+                if (MyAPIGateway.Session.IsServer)
+                    BroadcastState();
             }
         }
 
@@ -105,6 +112,7 @@ namespace TSUT.U235
             get { return _autoRestartOn; }
             set
             {
+                if (!MyAPIGateway.Session.IsServer) { ReactorSession.Networking.SendToServer(new ReactorSetAutoRestart { EntityId = _reactor.EntityId, Value = value }); return; }
                 _autoRestartOn = value;
                 Storage.SetBool(_reactor, Config.BlockStateKey, value);
             }
@@ -115,15 +123,21 @@ namespace TSUT.U235
             get { return _controlRodThreshold; }
             set
             {
+                if (!MyAPIGateway.Session.IsServer) { ReactorSession.Networking.SendToServer(new ReactorSetControlRod { EntityId = _reactor.EntityId, Value = value }); return; }
                 _controlRodThreshold = value;
                 Storage.SetFloat(_reactor, Config.ControlRodThresholdKey, value);
             }
         }
 
-        public void ManualLaunch() => TryStartSequence();
+        public void ManualLaunch()
+        {
+            if (!MyAPIGateway.Session.IsServer) { ReactorSession.Networking.SendToServer(new ReactorLaunchRequest { EntityId = _reactor.EntityId }); return; }
+            TryStartSequence();
+        }
 
         public void ManualStop()
         {
+            if (!MyAPIGateway.Session.IsServer) { ReactorSession.Networking.SendToServer(new ReactorStopRequest { EntityId = _reactor.EntityId }); return; }
             _autoRestartOn = false;
             Storage.SetBool(_reactor, Config.BlockStateKey, false);
             if (State == ReactorState.HeatingUp)
@@ -139,7 +153,8 @@ namespace TSUT.U235
             if (_reactor == null) return;
 
             _inventory = _reactor.GetInventory(0);
-            _state = (ReactorState)Math.Round(Storage.GetFloat(_reactor, Config.ReactorState));
+            int stateVal = (int)Math.Round(Storage.GetFloat(_reactor, Config.ReactorState));
+            _state = (stateVal >= 0 && stateVal <= 3) ? (ReactorState)stateVal : ReactorState.Idle;
             _burningCycleCountDown = Storage.GetFloat(_reactor, Config.FuelCooldown);
             _coreTemp = Storage.GetFloat(_reactor, Config.CoreTempKey, 0f);
             _autoRestartOn = Storage.GetBool(_reactor, Config.BlockStateKey, false);
@@ -162,6 +177,7 @@ namespace TSUT.U235
 
         protected override void OnHmsInit()
         {
+            MyLog.Default.WriteLineAndConsole("[HMS.U235] [diag] ReactorGameLogic.OnHmsInit fired, registering controls");
             ReactorTerminalControls.Register();
         }
 
@@ -365,6 +381,12 @@ namespace TSUT.U235
         {
             EnsureApiInitialized();
             if (Api?.Utils == null) return 0f;
+            if (!MyAPIGateway.Session.IsServer)
+            {
+                if (_state == ReactorState.Running)
+                    _burningCycleCountDown = Math.Max(0f, _burningCycleCountDown - deltaTime);
+                return 0f;
+            }
             EstimateErrors();
             var @internal = GetTempChange(deltaTime);
             var ambientExchange = Api.Utils.GetAmbientHeatLoss(_reactor, deltaTime);
@@ -425,6 +447,8 @@ namespace TSUT.U235
             UpdateSmokeEffect();
             _reactor?.SetDetailedInfoDirty();
             _reactor?.RefreshCustomInfo();
+            if (MyAPIGateway.Session.IsServer)
+                BroadcastState();
         }
 
         public override void UpdateBeforeSimulation()
@@ -477,6 +501,17 @@ namespace TSUT.U235
             {
                 SetOutputPower(GetCurrentEnergyOutput(1) / 1000000);
                 CoreTemp -= realTransfer / _coreTermalCapacity;
+                float meltdownTemp = Config.Instance.REACTOR_MELTDOWN_TEMPERATURE;
+                if (!_warnedPrimary && CoreTemp >= meltdownTemp - 200f)
+                {
+                    _warnedPrimary = true;
+                    BroadcastState();
+                }
+                if (!_warnedCritical && CoreTemp >= meltdownTemp - 100f)
+                {
+                    _warnedCritical = true;
+                    BroadcastState();
+                }
                 FuelCountdown -= deltaTime;
                 if (FuelCountdown <= 0)
                 {
@@ -491,6 +526,7 @@ namespace TSUT.U235
         private void SetOutputPower(float outputMW)
         {
             if (_source == null) return;
+            _lastOutputMW = outputMW;
             // vanilla OnCapacityChanged/OnEnabledChanged reset these; re-assert or distributor ignores the source
             if (outputMW > 0f)
             {
@@ -778,6 +814,34 @@ namespace TSUT.U235
             if (value >= 1000000) return $"{value / 1000000:F2} MJ/s";
             if (value >= 1000) return $"{value / 1000:F2} kJ/s";
             return $"{value:F0} J/s";
+        }
+
+        private void BroadcastState()
+        {
+            if (_reactor == null || !MyAPIGateway.Session.IsServer) return;
+            ReactorSession.Networking.RelayToClients(new ReactorStateSync
+            {
+                EntityId = _reactor.EntityId,
+                CoreTemp = CoreTemp,
+                FuelCountdown = FuelCountdown,
+                State = (int)State,
+                AutoRestart = _autoRestartOn,
+                ControlRodThreshold = _controlRodThreshold,
+                OutputMW = _lastOutputMW
+            });
+        }
+
+        public void ReceiveStateSync(float coreTemp, float fuelCountdown, ReactorState state, bool autoRestart, float controlRodThreshold, float outputMW)
+        {
+            _coreTemp = coreTemp;
+            _burningCycleCountDown = fuelCountdown;
+            _state = state;
+            _autoRestartOn = autoRestart;
+            _controlRodThreshold = controlRodThreshold;
+            UpdateEmissiveState();
+            SetOutputPower(outputMW);
+            _reactor?.SetDetailedInfoDirty();
+            _reactor?.RefreshCustomInfo();
         }
     }
 }

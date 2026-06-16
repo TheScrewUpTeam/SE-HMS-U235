@@ -16,9 +16,10 @@ namespace TSUT.HeatManagement
 {
     public class HmsApi
     {
-        public string ApiVersion = "1.0.2";
+        public string ApiVersion = "1.0.3";
         public static long HeatApiMessageId = 35136709491; // Unique message ID for heat API
         public static long HeatProviderMesageId = 35136709492; // Unique message ID for heat provider
+        public static long HeatApiRequestMessageId = 35136709493; // Unique message ID to request a resend of the heat API
 
         private static HmsApi _instance;
         private Action _onReady;
@@ -45,12 +46,15 @@ namespace TSUT.HeatManagement
             _instance = this;
             _onReady = onReady;
             MyAPIGateway.Utilities.RegisterMessageHandler(HeatApiMessageId, OnApiReceived);
+            MyAPIGateway.Utilities.SendModMessage(HeatApiRequestMessageId, null);
+            MyLog.Default.WriteLineAndConsole("[HMS.U235] [diag] HmsApi: requested API resend");
         }
 
         private void OnApiReceived(object obj)
         {
             Utils = new HmsUtils(obj);
             Effects = new HmsEffects(obj);
+            MyLog.Default.WriteLineAndConsole("[HMS.U235] [diag] HmsApi: OnApiReceived fired, Utils=" + (Utils != null));
             if (!_isApiReceived)
             {
                 _isApiReceived = true;
