@@ -177,7 +177,6 @@ namespace TSUT.U235
 
         protected override void OnHmsInit()
         {
-            MyLog.Default.WriteLineAndConsole("[HMS.U235] [diag] ReactorGameLogic.OnHmsInit fired, registering controls");
             ReactorTerminalControls.Register();
         }
 

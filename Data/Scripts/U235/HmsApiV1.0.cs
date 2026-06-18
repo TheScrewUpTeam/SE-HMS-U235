@@ -47,14 +47,12 @@ namespace TSUT.HeatManagement
             _onReady = onReady;
             MyAPIGateway.Utilities.RegisterMessageHandler(HeatApiMessageId, OnApiReceived);
             MyAPIGateway.Utilities.SendModMessage(HeatApiRequestMessageId, null);
-            MyLog.Default.WriteLineAndConsole("[HMS.U235] [diag] HmsApi: requested API resend");
         }
 
         private void OnApiReceived(object obj)
         {
             Utils = new HmsUtils(obj);
             Effects = new HmsEffects(obj);
-            MyLog.Default.WriteLineAndConsole("[HMS.U235] [diag] HmsApi: OnApiReceived fired, Utils=" + (Utils != null));
             if (!_isApiReceived)
             {
                 _isApiReceived = true;
